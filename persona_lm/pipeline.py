@@ -25,7 +25,7 @@ DEFAULTS = {
     "languages": [],                 # language codes the owner wants, e.g. ["en", "tl"]
     "vocab": 16000,
     "size": "s10m",
-    "ctx": 512,
+    "ctx": 4096,
     "pretrain_text": [],             # files/folders of public text (all wanted languages) for the tokenizer and for pretraining
     "chat_train": None,              # train.jsonl from messenger-import
     "chat_val": None,                # val.jsonl from messenger-import

@@ -45,12 +45,13 @@ class Config:
         return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
 
 
+# ctx 4096 = room for about 150 chat messages (about 25 tokens each) plus the system line, memory and the reply.
 # every size keeps d_model and d_ff multiples of 32 (needed for Q8_0 export)
 PRESETS = {
     "tiny": dict(n_layer=2, d_model=64, n_head=4, d_ff=192, ctx=64),
-    "s10m": dict(n_layer=6, d_model=384, n_head=6, d_ff=1024, ctx=512),
-    "s30m": dict(n_layer=8, d_model=512, n_head=8, d_ff=1376, ctx=512),
-    "s125m": dict(n_layer=12, d_model=768, n_head=12, d_ff=2048, ctx=512),
+    "s10m": dict(n_layer=6, d_model=384, n_head=6, d_ff=1024, ctx=4096),
+    "s30m": dict(n_layer=8, d_model=512, n_head=8, d_ff=1376, ctx=4096),
+    "s125m": dict(n_layer=12, d_model=768, n_head=12, d_ff=2048, ctx=4096),
 }
 
 

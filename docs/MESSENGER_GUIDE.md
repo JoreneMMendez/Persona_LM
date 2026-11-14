@@ -47,7 +47,7 @@ Leave out `--me` and `--chats` and it asks you interactively. What it does:
 
 **Learn from everyone (the default).** With `--only-mine` the loss is only on your replies and other people's messages are just context. Without it (the default) the AI is also trained on what other people wrote (one example per turn of anyone, in window mode; loss on every turn, in session mode), so it learns how conversations flow and picks up other voices, not only yours. Expect roughly twice as many examples. Costs: it will sometimes write like the people around you; other people's words (masked names, but whatever they said about themselves) become training text, so treat the finished model like your messages. Every chat and group is included, with no size limits (even chats where you never wrote), unless you say `--chats 1,2,3`, `--no-groups`, `--min-my-messages N` or `--max-participants N`. With `--only-mine` the old limits come back (20 of your messages, 12 people, you must have written).
 
-Useful options: `--min-my-messages 20` (skip chats where you hardly wrote), `--no-groups`, `--max-participants 12`, `--max-chars 1400` (one example is about 400 tokens; the model sees 512),
+Useful options: `--min-my-messages 20` (skip chats where you hardly wrote), `--no-groups`, `--max-participants 12`, `--max-chars 1400` (one example is about 400 tokens; the model's window is 4096 tokens for new models, 512 for older ones),
 `--system "..."`, `--alias "Mikee=Michael Santos"`, `--extra-names names.txt`, `--paranoid`.
 
 ### Output
@@ -102,7 +102,7 @@ Recommended plan (**pretrain, then fine-tune**), using only commands that exist 
 5. The memory graph and Person card (later stages) carry the facts about you. Weights carry style.
 
 **Language note:** if your chats are in Filipino/Taglish (or another mix), a pretraining corpus in English only helps less, and public Filipino text is much smaller. Tell the author which languages
-you use so the plan can be adjusted. The window is only 512 tokens and emoji or non-English text use more tokens per character, so `--max-chars` may need to be lower for you.
+you use so the plan can be adjusted. The window is limited (4096 tokens for new models, 512 for older ones) and emoji or non-English text use more tokens per character, so `--max-chars` may need to be lower for you.
 
 ## 6. Known limitations
 

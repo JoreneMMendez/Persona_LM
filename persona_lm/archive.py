@@ -1,6 +1,6 @@
 """Chat archive: the AI can "see" what was said in chats from long ago.
 
-Why this exists: the model's window is fixed at training time (512 tokens for s10m / s30m). It can never hold 200 old chats at once.
+Why this exists: the model's window is fixed at training time (4096 tokens for new s10m / s30m models; older checkpoints keep the 512 they were trained with). It can never hold 200 old chats at once.
 So instead every exchange (your message + the AI's reply) is appended to one file, and for each new message the few OLD exchanges
 that are most relevant to it are looked up and put into the prompt (inside the same <|memory|> block that the memory graph uses).
 

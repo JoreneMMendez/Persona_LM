@@ -171,8 +171,8 @@ class ReservedSpecials(unittest.TestCase):
             tok.save(p)
             self.assertEqual(Tokenizer.load(p).n_special, 5)
 
-    def test_s10m_default_context_is_512(self):
-        self.assertEqual(preset("s10m", 8000).ctx, 512)
+    def test_s10m_default_context_is_4096(self):
+        self.assertEqual(preset("s10m", 8000).ctx, 4096)
 
 
 class BackendChoice(unittest.TestCase):

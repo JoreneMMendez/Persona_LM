@@ -22,7 +22,7 @@ Design rules (they matter for Stage 7, when the AI may PROPOSE changes):
     line as one block  <|memory|> - fact - fact <|end|>  and cost part of the window.
   * --archive FILE (old chats) keeps EVERY exchange of every chat in one file and, for each new message, puts the few old exchanges that match it
     best into the same  <|memory|>  block (as "- earlier chat (3 months ago): you said ... / I said ..."). That is how the AI can "see" a chat from
-    200 chats ago although its window is only 512 tokens. /recall <words> shows what would be recalled. Only typed chat is archived.
+    200 chats ago although its window is only a few thousand tokens. /recall <words> shows what would be recalled. Only typed chat is archived.
   * The class does no keyboard reading itself (`handle(line)` takes a string), so tests never wait for a keyboard.
 """
 import os

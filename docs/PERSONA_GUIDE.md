@@ -118,7 +118,7 @@ python -m persona_lm persona check "calm mentor"
 
 It asks the identity probes (name, owner, values, memories) with the mask **on** and compares with the answers recorded **without** a mask for your current version (`identity record` first). It judges only **whether the facts about who the AI is are still stated** (against your threshold). Overall wording and tone will differ; that is what a mask is for, so they are shown but not judged. It changes no identity file, promotes nothing and adds one history line with numbers only.
 
-- If it says the model "gave no answer to any probe", the mask text does not fit in the model's window next to the identity line. The tiny practice models have a 64-token window, so **no mask fits there**; this is normal for them. Real `s10m` models have 512.
+- If it says the model "gave no answer to any probe", the mask text does not fit in the model's window next to the identity line. The tiny practice models have a 64-token window, so **no mask fits there**; this is normal for them. Real `s10m` models have 4096 (512 for models trained before that change).
 - A mask is refused (not silently shortened) when it takes more than a third of the room left after the identity line.
 - This compares words, not minds. Read a few answers yourself.
 

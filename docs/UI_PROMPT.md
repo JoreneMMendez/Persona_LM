@@ -20,7 +20,7 @@ HARD RULES (from HANDOFF.md, do not weaken)
 
 UI REQUIREMENTS
 - Modern, clean, calm design: dark and light themes (follow the system, with a toggle), a sidebar with the sections below, rounded cards, good spacing and typography (system font stack), smooth but light animations, clear empty/loading/error states, toasts, keyboard shortcuts, responsive down to a phone width, accessible (labels, focus rings, contrast, aria).
-- Chat page: message bubbles, typing indicator, Enter to send, Shift+Enter for a new line, stop button, a settings drawer (temperature, top-k, max new tokens), a live mood badge, a side panel showing what memory and old-chat recall (--archive) were put into the prompt, persona switcher, save/reset, and a token counter showing the 512-token window.
+- Chat page: message bubbles, typing indicator, Enter to send, Shift+Enter for a new line, stop button, a settings drawer (temperature, top-k, max new tokens), a live mood badge, a side panel showing what memory and old-chat recall (--archive) were put into the prompt, persona switcher, save/reset, and a token counter showing the model's token window.
 - Memory: graph view (pan/zoom, click a node), a searchable list, add/edit/pin/forget, the maintenance plan with a preview before apply.
 - Mood and Person card: view and edit, with a mood history chart.
 - Identity: read-only core view, versions, lineage verify, probe scores and drift, promote/rollback only where the safeguards allow it.

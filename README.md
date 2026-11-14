@@ -34,7 +34,7 @@ python -m persona_lm generate --ckpt runs/pre/ckpt.npz --tokenizer tok.json --pr
 python -m persona_lm export-gguf --ckpt runs/chat/ckpt.npz --tokenizer tok.json --out aria.gguf --type f16 --verify
 ```
 
-Sizes: `tiny` (0.1M, for testing), `s10m` and `s30m` (context 512), `s125m` (parameter counts exclude the vocabulary; the benchmark prints the total).
+Sizes: `tiny` (0.1M, for testing), `s10m` and `s30m` (context 4096, about 150 chat messages; models trained earlier keep their 512), `s125m` (parameter counts exclude the vocabulary; the benchmark prints the total).
 Training must use the same `--size` for pretraining and chat tuning.
 
 ## Your Messenger data (Stage 2; see docs/MESSENGER_GUIDE.md)

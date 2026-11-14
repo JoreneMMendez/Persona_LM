@@ -11,7 +11,7 @@ The AI's **long-term memory is a file** (`memory.json`), not part of the model. 
 - A **link** joins two nodes that appear in the same memory. The more memories they share, the thicker the line. Links are worked out from the memories every time, so they can never be out of date.
 - **Fading:** a memory you never use slowly gets weaker (it halves every 90 days). Using it in a chat makes it strong again. **Pinned** memories never fade. Fading never deletes: a very weak memory becomes *dormant* (not recalled, still in the file).
 
-How it reaches the AI: before each reply, the chat looks for memories that match what you just said and puts a few of them on the AI's "whiteboard" (the 512-piece window), right after its introduction line. It only takes up to about a fifth of the window, so the conversation still fits.
+How it reaches the AI: before each reply, the chat looks for memories that match what you just said and puts a few of them on the AI's "whiteboard" (the 4096-piece window; an older model trained at 512 has a 512-piece window), right after its introduction line. It only takes up to about a fifth of the window, so the conversation still fits.
 
 ## Add memories
 

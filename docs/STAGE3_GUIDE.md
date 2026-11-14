@@ -12,7 +12,7 @@ Everything runs on your own computer. Replace `WORK` with a folder name you choo
 Replace the two file paths with the real `train.jsonl` and `val.jsonl` made by `messenger-import`, and `en,tl` with your languages.
 
 ```powershell
-python -m persona_lm pipeline init --dir WORK --languages en,tl --vocab 16000 --size s10m --ctx 512 --pretrain-text PUBLIC_TEXT_FOLDER --chat-train PATH\train.jsonl --chat-val PATH\val.jsonl --batch 4 --accum 8
+python -m persona_lm pipeline init --dir WORK --languages en,tl --vocab 16000 --size s10m --ctx 4096 --pretrain-text PUBLIC_TEXT_FOLDER --chat-train PATH\train.jsonl --chat-val PATH\val.jsonl --batch 4 --accum 8
 ```
 
 Leave out `--pretrain-text` if you have no public text yet. The plan will say that fine-tuning on your chats alone teaches very little.
