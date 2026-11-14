@@ -74,14 +74,46 @@ def cmd_prepare(a):
     D.prepare(tok, make(a.data, tok), a.out, with_mask=chat, val_every=a.val_every, val_docs=val_docs)
 
 
+def _settings_path():
+    """persona_settings.json in the folder you run commands from (holds your real name and export path: private, never uploaded, see .gitignore).
+    The environment variable PERSONA_SETTINGS can point somewhere else (the tests use it)."""
+    return os.environ.get("PERSONA_SETTINGS") or "persona_settings.json"
+
+
+def _settings_load():
+    try:
+        with open(_settings_path(), encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _settings_save(**changes):
+    d = _settings_load()
+    d.update({k: v for k, v in changes.items() if v})
+    with open(_settings_path(), "w", encoding="utf-8") as f:
+        json.dump(d, f, indent=2, ensure_ascii=False)
+
+
+def _export_folder(a):
+    """The export folder typed now, else the one remembered from last time."""
+    folder = a.export or _settings_load().get("export")
+    if not folder:
+        raise SystemExit("Give the export folder once, e.g.  python -m persona_lm messenger-scan \"C:\\path\\to\\your_facebook_activity\"  (it is remembered after that).")
+    return folder
+
+
 def cmd_messenger_scan(a):
-    threads = M.load_table(a.export)
-    me = {n.casefold() for n in (a.me or [])} or None
+    folder = _export_folder(a)
+    threads = M.load_table(folder)
+    _settings_save(export=folder, me=list(a.me or []))
+    me = {n.casefold() for n in (a.me or _settings_load().get("me") or [])} or None
     print(M.format_table(threads, me, a.top))
     print("\nBusiest senders (one of them is probably you):")
     for name, n in M.rank_senders(threads).most_common(8):
         print("  %-32s %d messages" % (name, n))
-    print("\nNext: python -m persona_lm messenger-import %s --out data_msgr --me \"YOUR NAME\" --chats 1,2,3   (or leave out --me/--chats to be asked)" % a.export)
+    print("\nNext, just run:  python -m persona_lm messenger-import      (it asks which name is you; the folder is remembered)")
 
 
 def _read_lines(path):
@@ -91,9 +123,10 @@ def _read_lines(path):
 
 def cmd_messenger_import(a):
     interactive = sys.stdin.isatty()
-    threads = M.load_table(a.export)
+    folder = _export_folder(a)
+    threads = M.load_table(folder)
     senders = M.rank_senders(threads)
-    me = list(a.me or [])
+    me = list(a.me or _settings_load().get("me") or [])
     if not me:
         if not interactive:
             raise SystemExit("--me \"Your Name\" is required when this is not an interactive terminal (see `messenger-scan` for the names)")
@@ -102,18 +135,22 @@ def cmd_messenger_import(a):
     unknown = [n for n in me if n.casefold() not in lowered]
     if unknown:
         raise SystemExit("not a sender name in this export: %s. Run `messenger-scan` to see the exact spelling." % unknown)
+    everyone = not a.only_mine                               # learning from everyone: take every chat, no size limits, unless the owner sets them
+    min_mine = a.min_my_messages if a.min_my_messages is not None else (0 if everyone else 20)
+    max_people = a.max_participants if a.max_participants is not None else (None if everyone else 12)
     chats = a.chats
     if chats is None and interactive:
         print(M.format_table(threads, {n.casefold() for n in me}, a.top))
-        chats = input("\nWhich chats should the AI learn from? (all, or numbers like 1,3,5-9): ")
-    chats = "all" if chats is None else (chats if chats.strip().lower() == "all" else M.parse_selection(chats, len(threads)))
+        chats = input("\nWhich chats should the AI learn from? (press Enter for ALL, or type numbers like 1,3,5-9): ")
+    chats = "all" if (chats is None or not chats.strip()) else (chats if chats.strip().lower() == "all" else M.parse_selection(chats, len(threads)))
+    _settings_save(export=folder, me=me)
     if a.no_anonymize:
         print("WARNING: anonymization is OFF. Use this data only on your own computer. NEVER upload it to a cloud GPU.")
     aliases = dict(x.split("=", 1) for x in (a.alias or []) if "=" in x)
     extra = _read_lines(a.extra_names) if a.extra_names else []
-    stats = M.import_export(a.export, a.out, me, chats, a.mode, a.context, a.session_gap_hours, a.max_chars, a.val_fraction, a.system,
-                            not a.no_anonymize, extra, aliases, a.paranoid, a.min_my_messages, not a.no_groups, a.max_participants,
-                            log=print, threads=threads)
+    stats = M.import_export(folder, a.out, me, chats, a.mode, a.context, a.session_gap_hours, a.max_chars, a.val_fraction, a.system,
+                            not a.no_anonymize, extra, aliases, a.paranoid, min_mine, not a.no_groups, max_people,
+                            log=print, threads=threads, learn_others=not a.only_mine)
     print("\n=== import finished: %s ===" % a.out)
     print("%d chats, %d sessions, %d of your messages (%d turns), period %s" % (
         stats["chats_imported"], stats["sessions"], stats["my_messages"], stats["my_turns"], " to ".join(stats["period"] or ["?"])))
@@ -873,14 +910,14 @@ def build_parser():
     s.set_defaults(fn=cmd_prepare)
 
     s = sub.add_parser("messenger-scan", help="list the conversations in a Messenger JSON export (read-only, local)")
-    s.add_argument("export", help="the unzipped export folder (or its messages/ folder)")
+    s.add_argument("export", nargs="?", default=None, help="the unzipped export folder (or its messages/ folder); remembered after the first time")
     s.add_argument("--me", action="append", help="your name, to show how many messages in each chat are yours")
     s.add_argument("--top", type=int, default=60)
     s.set_defaults(fn=cmd_messenger_scan)
 
     s = sub.add_parser("messenger-import", help="turn a Messenger JSON export into chat training data (anonymized by default)")
-    s.add_argument("export")
-    s.add_argument("--out", required=True, help="output folder: train.jsonl, val.jsonl, stats.json, private/")
+    s.add_argument("export", nargs="?", default=None, help="the export folder; leave out to use the one remembered by messenger-scan")
+    s.add_argument("--out", default="data_msgr", help="output folder: train.jsonl, val.jsonl, stats.json, private/ (default data_msgr)")
     s.add_argument("--me", action="append", help="the sender name that is YOU (repeat the option if you appear under several names); asked if missing")
     s.add_argument("--chats", default=None, help="which chats: 'all' or the numbers from `messenger-scan`, e.g. 1,3,5-9; asked if missing")
     s.add_argument("--mode", choices=["window", "session"], default="window", help="window: one example per reply of yours with the previous --context turns; session: whole conversations")
@@ -889,9 +926,11 @@ def build_parser():
     s.add_argument("--max-chars", type=int, default=1400, help="size limit of one example in characters (about 400 tokens; the model's window is 512 tokens)")
     s.add_argument("--val-fraction", type=float, default=0.05, help="share of the most recent sessions held out for validation")
     s.add_argument("--system", default=None, help="optional system line put in front of every example")
-    s.add_argument("--min-my-messages", type=int, default=20, help="skip chats where you wrote fewer messages than this")
+    s.add_argument("--min-my-messages", type=int, default=None, help="skip chats where you wrote fewer messages than this (default: 0 when learning from everyone, 20 with --only-mine)")
     s.add_argument("--no-groups", action="store_true", help="skip group chats")
-    s.add_argument("--max-participants", type=int, default=12, help="skip chats with more people than this")
+    s.add_argument("--only-mine", action="store_true", help="learn ONLY from your own messages (default: the AI learns from everyone's messages and from all chats and groups)")
+    s.add_argument("--learn-from-others", action="store_true", help=argparse.SUPPRESS)      # kept so the old command still works: this is now the default
+    s.add_argument("--max-participants", type=int, default=None, help="skip chats with more people than this (default: no limit when learning from everyone, 12 with --only-mine)")
     s.add_argument("--no-anonymize", action="store_true", help="keep real names/numbers (ONLY for data that never leaves your computer)")
     s.add_argument("--paranoid", action="store_true", help="drop whole messages that contain an address-like text or a long number instead of masking it")
     s.add_argument("--extra-names", default=None, help="text file, one name per line: people who are mentioned but are not in the chats")

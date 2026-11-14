@@ -26,7 +26,24 @@ from dataclasses import dataclass, field
 
 from .anonymize import Anonymizer, capitalised_word_report
 
-THREAD_FILE_RE = re.compile(r"^message_(\d+)\.json$")
+# message_1.json, and also the name Android gives a file it moved to its trash: .trashed-1797028852-message_1.json (the content is the same JSON)
+THREAD_FILE_RE = re.compile(r"^(?:\.trashed-(\d+)-)?message_(\d+)\.json$")
+
+
+def thread_files(names):
+    """[(number, file name)] of the message files in a folder, oldest number first. If a number exists both as message_N.json and as a
+    .trashed-...-message_N.json copy, only the normal file is used (never both: that would count every message twice); between several
+    trashed copies the most recently trashed one wins."""
+    best = {}
+    for n in names:
+        m = THREAD_FILE_RE.match(n)
+        if not m:
+            continue
+        rank = (1, 0) if m.group(1) is None else (0, int(m.group(1)))
+        num = int(m.group(2))
+        if num not in best or rank > best[num][0]:
+            best[num] = (rank, n)
+    return sorted((num, name) for num, (_, name) in best.items())
 KNOWN_KINDS = ("inbox", "archived_threads", "filtered_threads", "message_requests", "e2ee_cutover")
 URL_ONLY_RE = re.compile(r"^\s*(?:https?://|www\.)\S+\s*$", re.I)
 
@@ -117,7 +134,7 @@ def clean_message(m):
 
 
 def load_thread(folder, kind="inbox"):
-    files = sorted((int(THREAD_FILE_RE.match(n).group(1)), n) for n in os.listdir(folder) if THREAD_FILE_RE.match(n))
+    files = thread_files(os.listdir(folder))
     participants, title, msgs, dropped, raw = [], "", [], collections.Counter(), 0
     for _, name in files:
         with open(os.path.join(folder, name), encoding="utf-8") as f:
@@ -261,16 +278,17 @@ def _msg(turn, group, train):
     return {"role": "assistant" if turn.who == "me" else "user", "content": render(turn, group), "train": train}
 
 
-def window_examples(turns, group, context, max_chars, system=None):
+def window_examples(turns, group, context, max_chars, system=None, learn_others=False):
     """One example per turn of yours: up to `context` previous turns as context (no loss), then your turn (loss).
+    With learn_others=True there is one example for EVERY turn (other people's too): the last turn carries the loss, whoever wrote it.
     Returns (examples, skipped_too_long). The oldest context turns are dropped first when the example would exceed max_chars."""
     out, skipped = [], 0
     for i, t in enumerate(turns):
-        if t.who != "me":
+        if t.who != "me" and not learn_others:
             continue
         target = _msg(t, group, True)
         if len(target["content"]) > max_chars:
-            skipped += 1                                          # truncating your own reply would teach the wrong thing
+            skipped += 1                                          # truncating a reply would teach the wrong thing
             continue
         ctx = [_msg(c, group, False) for c in turns[max(0, i - context):i]]
         budget = max_chars - len(target["content"])
@@ -281,8 +299,9 @@ def window_examples(turns, group, context, max_chars, system=None):
     return out, skipped
 
 
-def session_examples(turns, group, max_chars, system=None):
-    """Whole stretches of conversation (cut at turn boundaries to fit max_chars), loss on ALL of your turns in them.
+def session_examples(turns, group, max_chars, system=None, learn_others=False):
+    """Whole stretches of conversation (cut at turn boundaries to fit max_chars), loss on ALL of your turns in them
+    (on every turn, other people's included, when learn_others=True).
     Cheaper than window mode (every turn appears once) but the amount of context you get varies along the example."""
     chunks, cur, size = [], [], 0
     for t in turns:
@@ -297,7 +316,7 @@ def session_examples(turns, group, max_chars, system=None):
     out = []
     for c in chunks:
         if any(t.who == "me" for t in c):
-            out.append(([{"role": "system", "content": system, "train": False}] if system else []) + [_msg(t, group, t.who == "me") for t in c])
+            out.append(([{"role": "system", "content": system, "train": False}] if system else []) + [_msg(t, group, learn_others or t.who == "me") for t in c])
     return out
 
 
@@ -327,7 +346,7 @@ def size_verdict(my_tokens, n_params):
 # ------------------------------------------------------------------ 3-8. the whole import
 def import_export(export_dir, out_dir, me_names, chats="all", mode="window", context=8, gap_hours=6.0, max_chars=1400, val_fraction=0.05,
                   system=None, anonymize=True, extra_names=(), aliases=None, paranoid=False, min_my_messages=20, include_groups=True,
-                  max_participants=12, seed=1337, log=print, threads=None):
+                  max_participants=12, seed=1337, log=print, threads=None, learn_others=False):
     """Runs the whole pipeline and writes out_dir/{train.jsonl, val.jsonl, stats.json, private/}. Returns the stats dict."""
     if mode not in ("window", "session"):
         raise ValueError("mode must be window or session")
@@ -342,13 +361,13 @@ def import_export(export_dir, out_dir, me_names, chats="all", mode="window", con
         mine = sum(1 for m in t.messages if is_me(m.sender))
         if t.index not in wanted:
             skipped["not selected"] += 1
-        elif mine == 0:
+        elif mine == 0 and not learn_others:
             skipped["you never wrote in it"] += 1
         elif mine < min_my_messages:
             skipped["fewer than --min-my-messages of yours"] += 1
         elif t.is_group and not include_groups:
             skipped["group chat (excluded)"] += 1
-        elif len(t.participants) > max_participants:
+        elif max_participants and len(t.participants) > max_participants:
             skipped["more than --max-participants people"] += 1
         else:
             chosen.append(t)
@@ -382,8 +401,8 @@ def import_export(export_dir, out_dir, me_names, chats="all", mode="window", con
             prepared.append(Msg(m.sender, m.ts, text))
         for k, sess in enumerate(split_sessions(prepared, gap_hours), 1):
             turns = merge_turns(sess, is_me, anon.label)
-            if not any(x.who == "me" for x in turns):
-                continue
+            if not any(x.who == "me" for x in turns) and not learn_others:
+                continue                                         # nothing of yours to learn from (with learn_others, other people's turns count)
             st["sessions"] += 1
             st["my_messages"] += sum(1 for x in sess if is_me(x.sender))
             st["my_turns"] += sum(1 for x in turns if x.who == "me")
@@ -392,10 +411,10 @@ def import_export(export_dir, out_dir, me_names, chats="all", mode="window", con
             first_ts = sess[0].ts if first_ts is None else min(first_ts, sess[0].ts)
             last_ts = sess[-1].ts if last_ts is None else max(last_ts, sess[-1].ts)
             if mode == "window":
-                exs, long_skipped = window_examples(turns, t.is_group, context, max_chars, system)
-                st["your turns skipped (longer than --max-chars)"] += long_skipped
+                exs, long_skipped = window_examples(turns, t.is_group, context, max_chars, system, learn_others)
+                st["turns skipped (longer than --max-chars)"] += long_skipped
             else:
-                exs = session_examples(turns, t.is_group, max_chars, system)
+                exs = session_examples(turns, t.is_group, max_chars, system, learn_others)
             per_session.append((sess[0].ts, cid, k, [{"chat": cid, "session": k, "messages": e} for e in exs]))
 
     # -- split by time: whole sessions, the most recent ones are validation
@@ -441,16 +460,20 @@ def import_export(export_dir, out_dir, me_names, chats="all", mode="window", con
     from .model import preset
     n_params = preset("s10m", 8000).n_params()
     my_tokens = int(my_chars / 3.5)
-    level, verdict = size_verdict(my_tokens, n_params)
+    all_tokens = int((my_chars + other_chars) / 3.5)
+    level, verdict = size_verdict(all_tokens if learn_others else my_tokens, n_params)
+    if learn_others:                                              # the AI learns from everyone's text, so count all of it
+        verdict = verdict.replace("tokens of YOUR text", "tokens of text (yours and other people's)").replace("Your own messages", "These messages") \
+                         .replace("your messages alone", "these messages alone").replace("A model trained only on them", "A model trained only on them")
     all_text = [m["content"] for e in train_ex + val_ex for m in e["messages"]]
     stats = {
         "chats_imported": len(chosen), "chats_skipped": dict(skipped),
         "dropped_message_kinds": dict(sum((t.dropped for t in chosen), collections.Counter())),
         "sessions": st["sessions"], "my_messages": st["my_messages"], "my_turns": st["my_turns"],
-        "my_characters": my_chars, "other_characters": other_chars, "estimated_tokens_of_my_text": my_tokens,
+        "my_characters": my_chars, "other_characters": other_chars, "estimated_tokens_of_my_text": my_tokens, "estimated_tokens_of_all_text": all_tokens,
         "examples_train": len(train_ex), "examples_val": len(val_ex), "val_sessions": n_val,
         "period": [_date(first_ts), _date(last_ts)] if first_ts else None,
-        "mode": mode, "context_turns": context, "session_gap_hours": gap_hours, "max_chars": max_chars,
+        "mode": mode, "learn_from_others": bool(learn_others), "context_turns": context, "session_gap_hours": gap_hours, "max_chars": max_chars,
         "other_counters": {k: v for k, v in st.items() if k not in ("sessions", "my_messages", "my_turns")},
         "anonymized": anonymize, "paranoid": paranoid, "anonymizer_counts": dict(anon.counts),
         "audit": {"leaks": dict(leaks), "suspicious": dict(suspicious)},

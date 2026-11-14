@@ -125,6 +125,26 @@ class Mojibake(unittest.TestCase):
         self.assertEqual(M.fix_mojibake(5), 5)
 
 
+class TrashedFileNames(unittest.TestCase):
+    """Android renames moved files to .trashed-<number>-message_1.json; the export must still be found."""
+
+    def test_names_accepted_and_duplicates_never_counted_twice(self):
+        names = ["message_1.json", ".trashed-111-message_1.json", ".trashed-222-message_2.json", ".trashed-111-message_2.json",
+                 ".trashed-5-message_3.json", "message_3.json", "photo.jpg", "message_x.json", ".trashed-message_9.json"]
+        self.assertEqual(M.thread_files(names), [(1, "message_1.json"), (2, ".trashed-222-message_2.json"), (3, "message_3.json")])
+
+    def test_scan_finds_a_chat_that_only_has_a_trashed_file(self):
+        with tempfile.TemporaryDirectory() as root:
+            folder = os.path.join(root, "messages", "inbox", "friend_123")
+            os.makedirs(folder)
+            data = {"participants": [{"name": ME}, {"name": ANNA}], "title": ANNA, "thread_path": "inbox/friend_123",
+                    "messages": [msg(ANNA, BASE, "kumusta"), msg(ME, BASE + 1000, "ok lang")]}
+            with open(os.path.join(folder, ".trashed-1797028852-message_1.json"), "w", encoding="utf-8") as f:
+                json.dump(data, f)
+            (t,) = M.load_table(root, log=lambda *_: None)
+            self.assertEqual([m.text for m in t.messages], ["kumusta", "ok lang"])
+
+
 class Reading(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -256,6 +276,24 @@ class Examples(unittest.TestCase):
         exs = M.session_examples(self.turns, False, 1000)
         self.assertEqual(len(exs), 1)
         self.assertEqual([(m["content"], m["train"]) for m in exs[0]], [(t.text, t.who == "me") for t in self.turns])
+
+    def test_learn_from_others_window_has_one_example_per_turn_and_loss_on_the_last_turn_only(self):
+        exs, skipped = M.window_examples(self.turns, False, 2, 1000, learn_others=True)
+        self.assertEqual(skipped, 0)
+        self.assertEqual(len(exs), len(self.turns))                                    # every turn is a target, not only mine
+        self.assertEqual([e[-1]["content"] for e in exs], [t.text for t in self.turns])
+        for e in exs:
+            self.assertEqual([m["train"] for m in e], [False] * (len(e) - 1) + [True])
+        self.assertEqual(exs[0][-1]["role"], "user")                                   # another person's turn keeps role user, but now carries loss
+        self.assertEqual(exs[1][-1]["role"], "assistant")
+
+    def test_learn_from_others_default_is_off(self):
+        exs, _ = M.window_examples(self.turns, False, 2, 1000)
+        self.assertEqual(len(exs), 3)                                                  # unchanged: only my 3 turns
+
+    def test_learn_from_others_session_mode_trains_on_every_turn(self):
+        exs = M.session_examples(self.turns, False, 1000, learn_others=True)
+        self.assertEqual([m["train"] for m in exs[0]], [True] * len(self.turns))
 
     def test_session_mode_cuts_long_conversations_and_drops_chunks_without_me(self):
         turns = [turn("other", "a" * 400), turn("other", "b" * 400), turn("me", "c" * 100)]
@@ -445,6 +483,34 @@ class WholeImport(unittest.TestCase):
         self.assertEqual(st["mode"], "session")
         self.assertEqual(st["chats_skipped"]["group chat (excluded)"], 1)
 
+    def test_learn_from_others_import_has_more_examples_and_is_recorded(self):
+        out6 = os.path.join(self.tmp.name, "out6")
+        st = M.import_export(self.root, out6, [ME], "all", min_my_messages=3, learn_others=True, log=lambda *_: None, threads=self.threads)
+        self.assertTrue(st["learn_from_others"])
+        self.assertFalse(self.stats["learn_from_others"])
+        self.assertGreater(st["examples_train"] + st["examples_val"], self.stats["examples_train"] + self.stats["examples_val"])
+        with open(os.path.join(out6, "train.jsonl"), encoding="utf-8") as f:
+            rows = [json.loads(ln) for ln in f]
+        self.assertTrue(any(r["messages"][-1]["role"] == "user" and r["messages"][-1]["train"] for r in rows))   # a target written by someone else
+        self.assertTrue(st["safe_to_upload"])                                         # anonymizer audit still clean
+        for r in rows:                                                                # the data loader must keep EVERY example (none dropped for lacking an assistant turn)
+            self.assertIsNotNone(D.as_messages(r, with_train=True))
+        tok = Tokenizer.train(["the cat sat on a mat and hello there"], 300) if hasattr(Tokenizer, "train") else None
+        if tok is not None:
+            last = [r for r in rows if r["messages"][-1]["role"] == "user"][0]["messages"]
+            ids, mask = D.encode_chat(tok, [(m["role"], m["content"], m["train"]) for m in last])
+            self.assertGreater(int(mask.sum()), 0)                                     # loss really lands on the other person's words
+
+    def test_learning_from_everyone_takes_chats_where_you_never_wrote(self):
+        out7 = os.path.join(self.tmp.name, "out7")
+        st = M.import_export(self.root, out7, [ME], "all", min_my_messages=0, max_participants=None, learn_others=True, log=lambda *_: None, threads=self.threads)
+        self.assertNotIn("you never wrote in it", st["chats_skipped"])
+        self.assertEqual(st["chats_imported"], len(self.threads))
+        self.assertGreater(st["estimated_tokens_of_all_text"], st["estimated_tokens_of_my_text"])
+        self.assertIn("yours and other people's", st["data_size_verdict"])
+        st2 = M.import_export(self.root, os.path.join(self.tmp.name, "out8"), [ME], "all", min_my_messages=0, log=lambda *_: None, threads=self.threads)
+        self.assertGreater(st2["chats_skipped"]["you never wrote in it"], 0)                  # only-mine behaviour is unchanged
+
     def test_wrong_me_name_is_a_clear_error(self):
         with self.assertRaises(SystemExit):
             M.import_export(self.root, os.path.join(self.tmp.name, "o5"), ["Nobody Here"], "all", log=lambda *_: None, threads=self.threads)
@@ -459,10 +525,20 @@ class CommandLine(unittest.TestCase):
         cls.root = os.path.join(cls.tmp.name, "export")
         os.makedirs(cls.root)
         build_export(cls.root)
+        cls.old_settings = os.environ.get("PERSONA_SETTINGS")
+        os.environ["PERSONA_SETTINGS"] = os.path.join(cls.tmp.name, "settings.json")      # never touch a real persona_settings.json
 
     @classmethod
     def tearDownClass(cls):
+        if cls.old_settings is None:
+            os.environ.pop("PERSONA_SETTINGS", None)
+        else:
+            os.environ["PERSONA_SETTINGS"] = cls.old_settings
         cls.tmp.cleanup()
+
+    def setUp(self):
+        if os.path.exists(os.environ["PERSONA_SETTINGS"]):
+            os.remove(os.environ["PERSONA_SETTINGS"])
 
     def run_cli(self, *argv):
         buf = io.StringIO()
@@ -482,7 +558,7 @@ class CommandLine(unittest.TestCase):
 
     def test_import_then_prepare_puts_loss_on_my_words_only(self):
         out = os.path.join(self.tmp.name, "data_msgr")
-        text = self.run_cli("messenger-import", self.root, "--out", out, "--me", ME, "--chats", "all", "--min-my-messages", "3")
+        text = self.run_cli("messenger-import", self.root, "--out", out, "--me", ME, "--chats", "all", "--min-my-messages", "3", "--only-mine")
         self.assertIn("IS MY DATA ENOUGH?", text)
         self.assertIn("NEVER upload the folder", text)
         self.assertIn("no known name, e-mail, link or phone number left", text)
@@ -504,6 +580,33 @@ class CommandLine(unittest.TestCase):
         meta = json.loads(slurp(os.path.join(prep, "meta.json")))
         self.assertGreater(meta["val_tokens"], 0)                       # the explicit validation file was used
         self.assertEqual(meta["tokenizer_sha256"], tok.fingerprint())
+
+    def test_simple_commands_remember_the_folder_and_who_you_are(self):
+        """scan once with the folder; after that messenger-import needs no folder, no --out, no --me, no --chats, and learns from everyone."""
+        self.run_cli("messenger-scan", self.root, "--me", ME)
+        out0 = os.path.join(self.tmp.name, "simple0")
+        self.run_cli("messenger-import", "--out", out0, "--min-my-messages", "3")
+        st = json.loads(slurp(os.path.join(out0, "stats.json")))
+        self.assertTrue(st["learn_from_others"])                                   # default: everyone's messages carry loss
+        self.assertGreater(st["chats_imported"], 0)
+        saved = json.loads(slurp(os.environ["PERSONA_SETTINGS"]))
+        self.assertEqual((saved["export"], saved["me"]), (self.root, [ME]))
+        out1 = os.path.join(self.tmp.name, "simple1")
+        self.run_cli("messenger-import", "--out", out1, "--min-my-messages", "3", "--only-mine")
+        self.assertFalse(json.loads(slurp(os.path.join(out1, "stats.json")))["learn_from_others"])
+
+    def test_default_command_takes_every_chat_with_no_limits(self):
+        self.run_cli("messenger-scan", self.root, "--me", ME)
+        out = os.path.join(self.tmp.name, "everything")
+        self.run_cli("messenger-import", "--out", out)
+        st = json.loads(slurp(os.path.join(out, "stats.json")))
+        self.assertEqual(st["chats_imported"], len(M.load_table(self.root, log=lambda *_: None)))
+        self.assertEqual(st["chats_skipped"], {})
+
+    def test_scan_without_folder_and_nothing_remembered_explains_itself(self):
+        with self.assertRaises(SystemExit) as cm:
+            self.run_cli("messenger-scan")
+        self.assertIn("once", str(cm.exception.code))
 
     def test_import_needs_me_when_not_interactive(self):
         from unittest import mock

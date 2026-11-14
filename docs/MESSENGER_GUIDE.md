@@ -6,6 +6,15 @@ reports and why you should read a sample of the output yourself before anything 
 
 Everything below runs on your own computer. The importer and anonymizer contain no network code (a test checks this).
 
+## Short version (start here)
+
+Two commands. The folder and your name are remembered in `persona_settings.json` (private, never uploaded), so you type them only once.
+
+    python -m persona_lm messenger-scan "C:\path\to\your_facebook_activity"
+    python -m persona_lm messenger-import
+
+`messenger-import` asks which sender is you, then which chats (press Enter for ALL), uses every chat and group, learns from everyone's messages, anonymizes, and writes `data_msgr`. Add `--only-mine` to learn only from your own messages. Everything below describes the long options if you need them.
+
 ## 1. Get your data from Facebook
 
 Facebook changes its menus from time to time, so look for these words rather than exact clicks: Accounts Center / Settings > **Your information and permissions** >
@@ -35,6 +44,8 @@ Leave out `--me` and `--chats` and it asks you interactively. What it does:
   the loss is placed **only on your reply**. `--mode session` instead uses whole stretches of conversation with loss on all your turns (cheaper, less exact);
 * in group chats other people's turns start with `Person_02: ` so the model knows who is talking;
 * holds out the **most recent 5 %** of sessions as validation data (whole sessions, so training and validation never share a conversation).
+
+**Learn from everyone (the default).** With `--only-mine` the loss is only on your replies and other people's messages are just context. Without it (the default) the AI is also trained on what other people wrote (one example per turn of anyone, in window mode; loss on every turn, in session mode), so it learns how conversations flow and picks up other voices, not only yours. Expect roughly twice as many examples. Costs: it will sometimes write like the people around you; other people's words (masked names, but whatever they said about themselves) become training text, so treat the finished model like your messages. Every chat and group is included, with no size limits (even chats where you never wrote), unless you say `--chats 1,2,3`, `--no-groups`, `--min-my-messages N` or `--max-participants N`. With `--only-mine` the old limits come back (20 of your messages, 12 people, you must have written).
 
 Useful options: `--min-my-messages 20` (skip chats where you hardly wrote), `--no-groups`, `--max-participants 12`, `--max-chars 1400` (one example is about 400 tokens; the model sees 512),
 `--system "..."`, `--alias "Mikee=Michael Santos"`, `--extra-names names.txt`, `--paranoid`.

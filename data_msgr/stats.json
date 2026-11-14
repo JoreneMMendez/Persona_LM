@@ -1,0 +1,55 @@
+{
+  "chats_imported": 31,
+  "chats_skipped": {},
+  "dropped_message_kinds": {
+    "no_text": 1989,
+    "link_only": 75,
+    "system_text": 1332,
+    "unsent": 240,
+    "call": 41
+  },
+  "sessions": 973,
+  "my_messages": 1438,
+  "my_turns": 1006,
+  "my_characters": 51850,
+  "other_characters": 622444,
+  "estimated_tokens_of_my_text": 14814,
+  "estimated_tokens_of_all_text": 192655,
+  "examples_train": 10597,
+  "examples_val": 1058,
+  "val_sessions": 49,
+  "period": [
+    "2025-02-23",
+    "2026-11-11"
+  ],
+  "mode": "window",
+  "learn_from_others": true,
+  "context_turns": 8,
+  "session_gap_hours": 6.0,
+  "max_chars": 1400,
+  "other_counters": {
+    "turns skipped (longer than --max-chars)": 37
+  },
+  "anonymized": true,
+  "paranoid": false,
+  "anonymizer_counts": {
+    "name": 4119,
+    "handle": 1168,
+    "number": 3,
+    "url": 32,
+    "phone": 24,
+    "address": 8
+  },
+  "audit": {
+    "leaks": {
+      "phone": 1
+    },
+    "suspicious": {
+      "at-sign": 368,
+      "http": 9
+    }
+  },
+  "safe_to_upload": false,
+  "data_size_level": "SMALL",
+  "data_size_verdict": "SMALL: about 0.19M tokens of text (yours and other people's). A 13.7M-parameter model would want roughly 274M tokens to train well from scratch, so these messages alone are about 0.1% of that. Enough to copy your STYLE (length, slang, emoji habits) after pretraining, not enough to learn language from scratch. Plan: pretrain on public text, then fine-tune on your messages for a few epochs and watch the validation loss: it will start rising when the model begins memorising."
+}

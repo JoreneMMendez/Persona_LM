@@ -43,7 +43,7 @@ python -m persona_lm messenger-scan EXPORT_FOLDER --me "Your Name"              
 python -m persona_lm messenger-import EXPORT_FOLDER --out data_msgr --me "Your Name" --chats 1,2,3
 python -m persona_lm prepare --kind chat --tokenizer tok.json --data data_msgr/train.jsonl --val-data data_msgr/val.jsonl --out data_chat
 ```
-Local only. Anonymized by default (names, phones, e-mails, links, addresses) with a self-audit; loss only on your replies; validation split by session. Tested on synthetic data only.
+Short version: `messenger-scan \"C:\\path\\to\\export\"` once, then just `messenger-import` (folder and name are remembered; learns from everyone's messages and all chats; `--only-mine` to restrict). Local only. Anonymized by default (names, phones, e-mails, links, addresses) with a self-audit; loss only on your replies; validation split by session. Tested on synthetic data only.
 
 ## Guided pipeline (Stage 3; see docs/STAGE3_GUIDE.md)
 ```bash

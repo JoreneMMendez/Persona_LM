@@ -87,7 +87,7 @@ def as_messages(rec, with_train=False):
     else:
         return None
     msgs = [(r, c, t) for r, c, t in msgs if r in ROLE_ID and isinstance(c, str) and c]
-    if not any(r == "assistant" and (t is None or t) for r, _, t in msgs):
+    if not any(((r == "assistant") if t is None else bool(t)) for r, _, t in msgs):      # nothing to learn from: no turn with loss
         return None
     if with_train:
         return [(r, c, (r == "assistant") if t is None else bool(t)) for r, c, t in msgs]
