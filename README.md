@@ -83,6 +83,11 @@ Only what you type moves the mood. Tested on synthetic data only; the Tagalog/Bi
 
 `python -m persona_lm proposal --dir identity_core ...` (`memory-add`, `memory-forget`, `memory-importance`, `card-add`, `list`, `show`, `approve`, `reject`, `undo`). Filing a proposal changes nothing; `approve` and `undo` need you to type the proposal number at a terminal. Every decision goes into the lineage history without the memory text. The identity core cannot be changed this way. Stage 7b adds `config` (only `warn_drift`) and `finetune` (records the command, never runs it), lets the AI file proposals from its chat reply, and adds `/proposals /approve /reject` to the chat (typed confirmation, terminal only; start the chat with `--core`).
 
+
+## Personas: masks the AI can wear (Stage 8a; see docs/PERSONA_GUIDE.md)
+
+`python -m persona_lm persona --dir identity_core ...` (`add`, `list`, `show`, `edit`, `remove`, `use`). A persona is prompt text only: it never changes who the AI is (the identity core is untouched and the AI is told it is still itself underneath). Only you can switch one, by typing; every change goes into the lineage history without the text. In the chat (started with `--core`): `/persona`, `/persona NAME`, `/persona none`. Trained persona adapters are not built yet (Stage 8b).
+
 ## GPU training (Stage 1; see docs/GPU_GUIDE.md)
 ```bash
 python -m persona_lm check-gpu                       # does the GPU code match the NumPy reference on this machine?

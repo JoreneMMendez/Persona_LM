@@ -24,6 +24,7 @@ from . import person as PER
 from . import identity as ID
 from . import lineage as LIN
 from . import proposals as PRO
+from . import personas as PERS
 from .generate import complete, sample_ids
 from .gguf import export_model, params_from_gguf, read_gguf
 from .model import PRESETS, Config, forward, init_params, loss_and_grads, preset, zero_grads
@@ -185,6 +186,12 @@ def cmd_chat(a):
             store = MEM.MemoryStore(a.memory)
         except MEM.MemoryProblem as e:
             raise SystemExit("error: %s" % e)
+    personas = None
+    if core is not None:                                # Stage 8a: the persona file is checked BEFORE the model loads, too
+        try:
+            personas = PERS.Personas(core)
+        except PERS.PersonaProblem as e:
+            raise SystemExit("error: %s" % e)
     mood = tagger = card = None
     try:                                                # Stage 5 files are checked BEFORE the model loads, too
         if getattr(a, "mood", None):
@@ -208,7 +215,7 @@ def cmd_chat(a):
     session = ChatSession(tok, cfg.ctx, lambda ids, **kw: sample_ids(params, cfg, ids, **kw), system=system, save_dir=a.save_dir,
                           settings={"max_new": a.max_new, "temperature": a.temperature, "top_k": a.top_k},
                           memory=store, memory_tokens=a.memory_tokens, mood=mood, tagger=tagger, person=card,
-                          person_tokens=getattr(a, "person_tokens", None), identity=core,
+                          person_tokens=getattr(a, "person_tokens", None), identity=core, personas=personas,
                           proposals=PRO.Proposals(core, memory_path=getattr(a, "memory", None), person_path=getattr(a, "person", None)) if core is not None else None)
     if core is not None:
         name = getattr(a, "_version_name", None)
@@ -216,6 +223,8 @@ def cmd_chat(a):
                                                           " [an OLDER version, not the current one]" if name and name != core.current else ""))
         if left_out:
             print("Note: the AI's window is small, so these identity sections were left out of its prompt: %s." % ", ".join(left_out))
+        if personas is not None and personas.active:
+            print("Persona (a mask, prompt text only): %s. Underneath, still %s. /persona none takes it off." % (personas.active, core.sections["Name"]))
         if core.pending():
             print("A protected identity change is waiting (identity pending). It does not affect this chat until applied.")
         if core.hand_edits():
@@ -521,6 +530,33 @@ def _proposal_action(a):
         print(pr.undo(a.id, ask=ID.keyboard_ask))
     elif act == "purge-undo":
         print(pr.purge_undo(a.id, ask=ID.keyboard_ask))
+
+
+def cmd_persona(a):
+    try:
+        _persona_action(a)
+    except (PERS.PersonaProblem, ID.IdentityProblem, LIN.LineageProblem, OSError) as e:
+        raise SystemExit("error: %s" % e)
+
+
+def _persona_action(a):
+    """python -m persona_lm persona [--dir identity_core] <list|show|add|edit|remove|use> (Stage 8a). Masks only: the identity core's sections are never touched."""
+    ps = PERS.Personas(ID.Core(a.dir))
+    act = a.action
+    if act == "list":
+        print(ps.describe())
+    elif act == "show":
+        name, p = ps.get(a.name)
+        print("%s%s\n  text: %s\n  what the AI sees:  <|persona|> %s <|end|>" % (name, "  (on now)" if name == ps.active else "", p["text"],
+                                                                                 PERS.block_text(ps.core.sections["Name"], name, p["text"])))
+    elif act == "add":
+        print(ps.add(a.name, " ".join(a.text)))
+    elif act == "edit":
+        print(ps.edit(a.name, " ".join(a.text)))
+    elif act == "remove":
+        print(ps.remove(a.name))
+    elif act == "use":
+        print(ps.use(a.name))
 
 
 def cmd_identity(a):
@@ -1000,6 +1036,17 @@ def build_parser():
     q = pa.add_parser("undo", help="undo an approved proposal (typed confirmation)"); q.add_argument("id")
     q = pa.add_parser("purge-undo", help="erase the saved copy of a forgotten memory (then it cannot be undone)"); q.add_argument("id")
     s.set_defaults(fn=cmd_proposal)
+
+    s = sub.add_parser("persona", help="Stage 8a: masks the AI can wear (prompt text only; never changes who it is); every switch is logged")
+    s.add_argument("--dir", default="identity_core")
+    pe = s.add_subparsers(dest="action", required=True)
+    pe.add_parser("list", help="the masks you made and which one is on")
+    q = pe.add_parser("show", help="one mask and exactly what the AI is shown"); q.add_argument("name")
+    q = pe.add_parser("add", help="make a mask: persona add \"calm mentor\" You speak slowly and kindly."); q.add_argument("name"); q.add_argument("text", nargs="+")
+    q = pe.add_parser("edit", help="change a mask's text"); q.add_argument("name"); q.add_argument("text", nargs="+")
+    q = pe.add_parser("remove", help="delete a mask"); q.add_argument("name")
+    q = pe.add_parser("use", help="put a mask on (or 'none' to take it off)"); q.add_argument("name")
+    s.set_defaults(fn=cmd_persona)
 
     s = sub.add_parser("identity", help="Stage 6: the identity core (who the AI is, outside the weights), version history, regression probes")
     s.add_argument("--dir", default="identity_core")

@@ -8,6 +8,9 @@ Design rules (they matter for Stage 7, when the AI may PROPOSE changes):
     in its reply (at most 3 per reply, duplicates skipped, anything invalid ignored). That is all its words can do: they never approve, reject, undo or
     run a command. /approve ID shows the exact change and then needs you to TYPE the number again; it works only when the chat is run in a terminal
     window (not from a pipe or a script). Undo is `python -m persona_lm proposal undo ID`.
+  * /persona (Stage 8a) works when the chat was started with --core DIR. A persona is a MASK: its text goes into the prompt as  <|persona|> ... <|end|>
+    after the system line (the identity line stays, and the block says the AI is still itself underneath). Only the typed /persona command switches it
+    (and logs it); the model's words never do. Personas never edit the identity core.
   * /identity (Stage 6) shows the identity core when the chat was started with --core DIR. It only READS: protected changes can be made only
     with the `identity` commands, typed in a terminal, never from inside the chat and never from anything the AI writes.
   * /mood (Stage 5) works when the chat was started with --mood FILE. Only what the person TYPES moves the mood (each message is tagged by the
@@ -23,11 +26,13 @@ import os
 import sys
 import time
 
-from .bpe import ASSISTANT, END, MEMORY, MOOD, ROLE_ID, SPEAKER
+from .bpe import ASSISTANT, END, MEMORY, MOOD, PERSONA, ROLE_ID, SPEAKER
 from . import emotion as EMO
 from . import person as PER
 from . import identity as ID
 from . import proposals as PRO
+from . import personas as PERS
+from .lineage import LineageProblem
 from .memory import MemoryConflict, MemoryProblem, parse_remember
 
 
@@ -44,6 +49,7 @@ HELP = """Commands (type them at the  you>  prompt):
   /proposals        (needs --core) changes the AI has proposed and that wait for you
   /approve <id>     (needs --core) look at a proposed change, then type its number to apply it (undo: the `proposal undo` command)
   /reject <id>      (needs --core) throw a proposed change away
+  /persona          (needs --core) the masks you made; /persona NAME puts one on, /persona none takes it off (add/edit/remove: the `persona` command)
   /save [file]      write the conversation to a text file on this computer (never overwrites)
   /system <text>    set the system line (how the AI is introduced to itself) and start again
   /temp <0-2>       randomness of the replies (0 = always the most likely word, 0.8 = default)
@@ -57,7 +63,7 @@ class ChatSession:
     """One conversation. generate(prompt_ids, seed=..., max_new=..., temperature=..., top_k=...) -> list of new token ids."""
 
     def __init__(self, tok, ctx, generate, system=None, save_dir=".", settings=None, seed=0, clock=time.time, memory=None, memory_tokens=None,
-                 mood=None, tagger=None, person=None, person_tokens=None, identity=None, proposals=None):
+                 mood=None, tagger=None, person=None, person_tokens=None, identity=None, proposals=None, personas=None):
         self.tok, self.ctx, self.generate = tok, ctx, generate
         self.system = system
         self.save_dir = save_dir
@@ -82,6 +88,7 @@ class ChatSession:
         self._told_about_card = False
         self.identity = identity                # an identity.Core, or None (no identity core in this chat)
         self.proposals = proposals              # a proposals.Proposals, or None (proposals switched off)
+        self.personas = personas                # a personas.Personas, or None
         self._awaiting = None                   # ("approve", "p0001"): the next typed line must be that number
 
     # ------------------------------------------------------------ what the model sees
@@ -126,16 +133,26 @@ class ChatSession:
             return []
         return [MOOD] + self.tok.encode(self.mood.prompt_text(), allow_special=False) + [END]
 
+    def _persona_block(self):
+        if self.personas is None:
+            return []
+        text = self.personas.prompt_text()
+        return [PERSONA] + self.tok.encode(text, allow_special=False) + [END] if text else []
+
     def build_prompt(self):
         """System line first, then as many of the NEWEST whole messages as fit. Returns (ids, dropped_message_count) or (None, reason)."""
         budget = self.prompt_budget() - 1                             # 1 = the final "assistant" marker
         system_ids = self._message_ids("system", self.system) if self.system else []
         if len(system_ids) > budget // 2:
             return None, "The system line is too long (%d tokens; at most %d)." % (len(system_ids), budget // 2)
-        speaker_ids = self._speaker_block(budget - len(system_ids))
+        persona_ids = self._persona_block()                           # the mask is never silently dropped: if it does not fit, the message is refused
+        if len(persona_ids) > (budget - len(system_ids)) // 3:
+            return None, "The persona text is too long for the model's window (%d tokens; at most %d). Shorten it with:  persona edit NAME \"...\"  or take it off: /persona none" % (
+                len(persona_ids), (budget - len(system_ids)) // 3)
+        speaker_ids = self._speaker_block(budget - len(system_ids) - len(persona_ids))
         mood_ids = self._mood_block()
-        memory_ids = self._memory_block(budget - len(system_ids) - len(speaker_ids) - len(mood_ids))
-        room = budget - len(system_ids) - len(speaker_ids) - len(mood_ids) - len(memory_ids)
+        memory_ids = self._memory_block(budget - len(system_ids) - len(persona_ids) - len(speaker_ids) - len(mood_ids))
+        room = budget - len(system_ids) - len(persona_ids) - len(speaker_ids) - len(mood_ids) - len(memory_ids)
         keep = []
         for role, text in reversed(self.history):
             ids = self._message_ids(role, text)
@@ -147,7 +164,7 @@ class ChatSession:
             last = self._message_ids(*self.history[-1])
             return None, "That message is too long for the model's window (%d tokens; at most %d). Send something shorter." % (len(last), budget - len(system_ids))
         dropped = len(self.history) - len(keep)
-        ids = list(system_ids) + speaker_ids + mood_ids + memory_ids
+        ids = list(system_ids) + persona_ids + speaker_ids + mood_ids + memory_ids
         for m in reversed(keep):
             ids += m
         return ids + [ASSISTANT], dropped
@@ -276,9 +293,22 @@ class ChatSession:
             if self.identity is None:
                 return "No identity core in this chat. Start it with:  python -m persona_lm chat --core identity_core ...   (make one with: identity init)", False
             return self.identity.describe(), False
+        if name == "/persona":
+            return self.persona_command(arg), False
         if name in ("/proposals", "/approve", "/reject"):
             return self.proposal_command(name, arg), False
         return "Unknown command %s. Type /help. (To send a message that starts with a slash, start it with two slashes.)" % name, False
+
+    def persona_command(self, arg):
+        if self.personas is None:
+            return "No personas in this chat. Start it with:  python -m persona_lm chat --core identity_core ...   (add masks with: persona add)"
+        if not arg:
+            return self.personas.describe()
+        try:
+            msg = self.personas.use(arg)
+        except (PERS.PersonaProblem, ID.IdentityProblem, LineageProblem, OSError) as e:
+            return "%s Nothing was changed." % e
+        return msg + "\n(The conversation so far is kept; /reset starts it fresh. Only prompt text changed: the model's weights are the same.)"
 
     def proposal_command(self, name, arg):
         if self.proposals is None:

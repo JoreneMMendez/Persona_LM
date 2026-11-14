@@ -17,7 +17,8 @@ import time
 GENESIS = "0" * 64
 KINDS = ("genesis", "identity-edit", "identity-staged", "identity-applied", "identity-cancelled", "version-added", "scored", "promote", "rollback",
          "settings", "distill", "note",
-         "proposal-approved", "proposal-rejected", "proposal-undone")
+         "proposal-approved", "proposal-rejected", "proposal-undone",
+         "persona-added", "persona-edited", "persona-removed", "persona-switched")
 
 
 class LineageProblem(Exception):
