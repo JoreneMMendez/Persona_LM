@@ -141,9 +141,11 @@ class TokenizerSafety(unittest.TestCase):
         tok = Tokenizer.train([CORPUS], 300)
         with tempfile.TemporaryDirectory() as tmp:
             src = os.path.join(tmp, "c.txt")
-            open(src, "w").write(CORPUS)
+            with open(src, "w", encoding="utf-8") as f:
+                f.write(CORPUS)
             D.prepare(tok, D.pretrain_docs([src], tok), os.path.join(tmp, "o"), with_mask=False, log=lambda *_: None)
-            meta = json.load(open(os.path.join(tmp, "o", "meta.json")))
+            with open(os.path.join(tmp, "o", "meta.json"), encoding="utf-8") as f:
+                meta = json.load(f)
             self.assertEqual(meta["tokenizer_sha256"], tok.fingerprint())
 
 

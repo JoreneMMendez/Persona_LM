@@ -176,7 +176,8 @@ class DataAndTraining(unittest.TestCase):
     def test_prepare_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = make_data(tmp, self.tok)
-            meta = json.load(open(os.path.join(out, "meta.json")))
+            with open(os.path.join(out, "meta.json"), encoding="utf-8") as f:
+                meta = json.load(f)
             self.assertGreater(meta["train_tokens"], 100)
             self.assertGreater(meta["val_tokens"], 0)
             toks = np.fromfile(os.path.join(out, "train.bin"), dtype=np.uint16)
@@ -195,7 +196,8 @@ class DataAndTraining(unittest.TestCase):
             cfg = tiny_cfg(self.tok.vocab_size)
             logs = []
             train(os.path.join(tmp, "run"), out, cfg, dict(batch=4, accum=1, steps=80, lr=3e-3, min_lr=3e-4, warmup=5, ckpt_every=40, log_every=10, eval_every=40, eval_batches=2), log=logs.append)
-            lines = [json.loads(l) for l in open(os.path.join(tmp, "run", "metrics.jsonl"))]
+            with open(os.path.join(tmp, "run", "metrics.jsonl"), encoding="utf-8") as f:
+                lines = [json.loads(l) for l in f]
             self.assertLess(lines[-1]["loss"], lines[0]["loss"] - 1.0)
 
     def test_resume_gives_identical_result(self):
@@ -302,7 +304,8 @@ class Gguf(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             p = os.path.join(tmp, "m.gguf")
             gguf.write_gguf(p, [("general.architecture", "str", "x")], [("w", np.zeros((3, 5), np.float32), 0)])
-            raw = open(p, "rb").read()
+            with open(p, "rb") as f:
+                raw = f.read()
         i = raw.index(b"\x01\x00\x00\x00\x00\x00\x00\x00w") + 9      # after the 1-char name string
         n_dims = struct.unpack_from("<I", raw, i)[0]
         dims = struct.unpack_from("<QQ", raw, i + 4)
