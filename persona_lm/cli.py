@@ -23,6 +23,7 @@ from . import emotion as EMO
 from . import person as PER
 from . import identity as ID
 from . import lineage as LIN
+from . import proposals as PRO
 from .generate import complete, sample_ids
 from .gguf import export_model, params_from_gguf, read_gguf
 from .model import PRESETS, Config, forward, init_params, loss_and_grads, preset, zero_grads
@@ -474,6 +475,47 @@ def _person_action(a):
             print("Applied. Lines you wrote yourself were not touched. (Previous version kept as %s)" % (path[:-3] + ".prev.md" if path.endswith(".md") else path + ".prev"))
         else:
             print("Lines marked [auto] are only suggestions. To keep one for good delete the word [auto]; to ban it change [auto] to [no].")
+
+
+def cmd_proposal(a):
+    try:
+        _proposal_action(a)
+    except (PRO.ProposalProblem, ID.IdentityProblem, LIN.LineageProblem, MEM.MemoryProblem, PER.PersonProblem, OSError) as e:
+        raise SystemExit("error: %s" % e)
+
+
+def _proposal_action(a):
+    """python -m persona_lm proposal [--dir identity_core] <action> (Stage 7a). Filing a proposal changes nothing; approve/undo need typing at the keyboard."""
+    pr = PRO.Proposals(ID.Core(a.dir), memory_path=a.memory, person_path=a.person)
+    act = a.action
+    if act in ("memory-add", "memory-forget", "memory-importance", "card-add"):
+        if act == "memory-add":
+            args = {"text": " ".join(a.text), "emotion": a.emotion, "importance": a.importance, "pinned": a.pinned, "nodes": a.node or []}
+        elif act == "memory-forget":
+            args = {"id": a.id}
+        elif act == "memory-importance":
+            args = {"id": a.id, "importance": a.importance, "pinned": a.pinned}
+        else:
+            args = {"section": a.section, "text": " ".join(a.text)}
+        p = pr.submit(act, args, a.why)
+        print(pr.describe(p))
+        print("Filed as %s. Nothing was changed. To apply it: python -m persona_lm proposal approve %s" % (p["id"], p["id"]))
+    elif act == "list":
+        rows = pr.listing(None if a.all else "pending")
+        if not rows:
+            print("No %sproposals." % ("" if a.all else "waiting "))
+        for p in rows:
+            print("%s  %-9s %-18s %s" % (p["id"], p["status"], p["kind"], p["why"][:70]))
+    elif act == "show":
+        print(pr.describe(pr.get(a.id)))
+    elif act == "approve":
+        print(pr.approve(a.id, ask=ID.keyboard_ask))
+    elif act == "reject":
+        print(pr.reject(a.id, a.note))
+    elif act == "undo":
+        print(pr.undo(a.id, ask=ID.keyboard_ask))
+    elif act == "purge-undo":
+        print(pr.purge_undo(a.id, ask=ID.keyboard_ask))
 
 
 def cmd_identity(a):
@@ -930,6 +972,24 @@ def build_parser():
     q.add_argument("--memory", default=None, help="memory.json: the people you remember")
     q.add_argument("--apply", action="store_true")
     s.set_defaults(fn=cmd_person)
+
+    s = sub.add_parser("proposal", help="Stage 7a: changes the AI may only PROPOSE (memory, Person card); you approve at the keyboard; every change can be undone")
+    s.add_argument("--dir", default="identity_core"); s.add_argument("--memory", default=None, help="memory file (default: the one registered in the core)")
+    s.add_argument("--person", default=None, help="Person card file (default: the one registered in the core)")
+    pa = s.add_subparsers(dest="action", required=True)
+    q = pa.add_parser("memory-add", help="propose a new memory"); q.add_argument("text", nargs="+"); q.add_argument("--why", required=True)
+    q.add_argument("--emotion", default="neutral"); q.add_argument("--importance", type=float, default=0.5); q.add_argument("--pinned", action="store_true"); q.add_argument("--node", action="append")
+    q = pa.add_parser("memory-forget", help="propose forgetting one memory"); q.add_argument("id"); q.add_argument("--why", required=True)
+    q = pa.add_parser("memory-importance", help="propose a new importance (0-1) for one memory"); q.add_argument("id"); q.add_argument("importance", type=float)
+    q.add_argument("--why", required=True); q.add_argument("--pinned", action=argparse.BooleanOptionalAction, default=None)
+    q = pa.add_parser("card-add", help="propose a line for the Person card"); q.add_argument("section"); q.add_argument("text", nargs="+"); q.add_argument("--why", required=True)
+    q = pa.add_parser("list", help="waiting proposals (--all for every one)"); q.add_argument("--all", action="store_true")
+    q = pa.add_parser("show", help="what / why / diff / how to undo"); q.add_argument("id")
+    q = pa.add_parser("approve", help="apply a proposal (you type its number to confirm; keyboard only)"); q.add_argument("id")
+    q = pa.add_parser("reject", help="throw a proposal away"); q.add_argument("id"); q.add_argument("--note", default="")
+    q = pa.add_parser("undo", help="undo an approved proposal (typed confirmation)"); q.add_argument("id")
+    q = pa.add_parser("purge-undo", help="erase the saved copy of a forgotten memory (then it cannot be undone)"); q.add_argument("id")
+    s.set_defaults(fn=cmd_proposal)
 
     s = sub.add_parser("identity", help="Stage 6: the identity core (who the AI is, outside the weights), version history, regression probes")
     s.add_argument("--dir", default="identity_core")

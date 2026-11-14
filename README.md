@@ -79,6 +79,10 @@ python -m persona_lm chat --ckpt runs/chat/ckpt.npz --tokenizer tok.json --mood 
 ```
 Only what you type moves the mood. Tested on synthetic data only; the Tagalog/Bisaya word lists are unchecked.
 
+## Proposals: the AI may only suggest changes (Stage 7a; see docs/PROPOSAL_GUIDE.md)
+
+`python -m persona_lm proposal --dir identity_core ...` (`memory-add`, `memory-forget`, `memory-importance`, `card-add`, `list`, `show`, `approve`, `reject`, `undo`). Filing a proposal changes nothing; `approve` and `undo` need you to type the proposal number at a terminal. Every decision goes into the lineage history without the memory text. The identity core cannot be changed this way. Config/fine-tune proposals and chat `/approve` come in 7b.
+
 ## GPU training (Stage 1; see docs/GPU_GUIDE.md)
 ```bash
 python -m persona_lm check-gpu                       # does the GPU code match the NumPy reference on this machine?
