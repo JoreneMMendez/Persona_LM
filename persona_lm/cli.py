@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import shlex
 import sys
 import time
 
@@ -12,7 +13,10 @@ from . import messenger as M
 from .backend import NO_TORCH_MSG, choose_backend, torch_installed
 from .bpe import Tokenizer
 from .ckpt import load_ckpt
-from .generate import chat_loop, complete
+from . import pipeline as PL
+from . import report as R
+from .chatrepl import ChatSession, run_repl
+from .generate import complete, sample_ids
 from .gguf import export_model, params_from_gguf, read_gguf
 from .model import PRESETS, Config, forward, init_params, loss_and_grads, preset, zero_grads
 from .train import DEFAULT_HP, train
@@ -157,7 +161,48 @@ def cmd_generate(a):
 
 def cmd_chat(a):
     params, cfg, tok = _load_model(a)
-    chat_loop(params, cfg, tok, system=a.system, max_new=a.max_new, temperature=a.temperature, top_k=a.top_k)
+    session = ChatSession(tok, cfg.ctx, lambda ids, **kw: sample_ids(params, cfg, ids, **kw), system=a.system, save_dir=a.save_dir,
+                          settings={"max_new": a.max_new, "temperature": a.temperature, "top_k": a.top_k})
+    run_repl(session)
+
+
+def cmd_status(a):
+    for line in R.format_status(a.dir):
+        print(line)
+
+
+def cmd_data_report(a):
+    try:
+        lines = R.format_data_report(a.data_dir, a.size, a.ctx, a.batch, a.accum, a.steps, a.tokenizer)
+    except (OSError, ValueError) as e:
+        sys.exit(str(e))
+    for line in lines:
+        print(line)
+
+
+def cmd_pipeline(a):
+    try:
+        if a.pcmd == "init":
+            fields = dict(languages=[x.strip() for x in a.languages.split(",") if x.strip()] if a.languages else None, vocab=a.vocab, size=a.size, ctx=a.ctx,
+                          pretrain_text=a.pretrain_text, chat_train=a.chat_train, chat_val=a.chat_val, pretrain_steps=a.pretrain_steps,
+                          finetune_epochs=a.finetune_epochs, batch=a.batch, accum=a.accum, system=a.system,
+                          train_args=shlex.split(a.train_args) if a.train_args is not None else None)
+            proj, changed = PL.init_project(a.dir, **fields)
+            print("Saved %s (%s)." % (PL.project_path(a.dir), ("changed: " + ", ".join(changed)) if changed else "nothing changed"))
+            if not proj["decisions_confirmed"]:
+                print("Decisions are NOT confirmed yet. Read `pipeline plan`, then `pipeline confirm`.")
+        elif a.pcmd == "confirm":
+            if not a.yes:
+                sys.exit("This locks languages, vocabulary size and window length for the tokenizer. Add --yes once you have said OK to them.")
+            proj = PL.confirm_decisions(a.dir)
+            print("Confirmed: languages %s, vocabulary %d, window %d, model %s. The tokenizer step may run now." % (",".join(proj["languages"]), proj["vocab"], proj["ctx"], proj["size"]))
+        elif a.pcmd == "plan":
+            for line in PL.plan_lines(a.dir):
+                print(line)
+        elif a.pcmd == "run":
+            PL.run_step(a.dir, a.step, main)
+    except PL.ProjectError as e:
+        sys.exit(str(e))
 
 
 def cmd_export(a):
@@ -315,6 +360,7 @@ def build_parser():
             s.add_argument("--seed", type=int, default=0)
         if name == "chat":
             s.add_argument("--system", default=None)
+            s.add_argument("--save-dir", default=".", help="where /save writes conversations (this computer only)")
         if name == "export-gguf":
             s.add_argument("--out", required=True)
             s.add_argument("--type", choices=["f32", "f16", "q8_0"], default="f16")
@@ -330,6 +376,47 @@ def build_parser():
     s.add_argument("--try-batches", default=None, help="comma list, e.g. 1,2,4,8,16: measure each and stop at the first that does not fit in GPU memory")
     _add_backend_args(s)
     s.set_defaults(fn=cmd_benchmark)
+
+    s = sub.add_parser("status", help="what exists in a work folder (tokenizers, token files, runs) and what to do next; read-only")
+    s.add_argument("dir", nargs="?", default=".")
+    s.set_defaults(fn=cmd_status)
+
+    s = sub.add_parser("data-report", help="how much data a token folder holds and whether it suits a model size; read-only")
+    s.add_argument("--data-dir", required=True)
+    s.add_argument("--size", choices=sorted(PRESETS), default="s10m")
+    s.add_argument("--ctx", type=int, default=None)
+    s.add_argument("--batch", type=int, default=None)
+    s.add_argument("--accum", type=int, default=None)
+    s.add_argument("--steps", type=int, default=None, help="how many passes over the data would this many steps make?")
+    s.add_argument("--tokenizer", default=None, help="check that the data was made with this tokenizer")
+    s.set_defaults(fn=cmd_data_report)
+
+    s = sub.add_parser("pipeline", help="guided steps: tokenizer -> pretrain -> chat fine-tune (decisions are written to project.json)")
+    ps = s.add_subparsers(dest="pcmd", required=True)
+    q = ps.add_parser("init", help="create or update project.json (only the options you give change)")
+    q.add_argument("--dir", required=True, help="work folder (created if missing)")
+    q.add_argument("--languages", default=None, help="language codes you want, comma separated, e.g. en,tl")
+    q.add_argument("--vocab", type=int, default=None, help="vocabulary size (recommended 16000)")
+    q.add_argument("--size", choices=sorted(PRESETS), default=None)
+    q.add_argument("--ctx", type=int, default=None, help="window length in tokens (recommended 512)")
+    q.add_argument("--pretrain-text", nargs="+", default=None, help="files/folders of PUBLIC text in all wanted languages")
+    q.add_argument("--chat-train", default=None, help="train.jsonl from messenger-import")
+    q.add_argument("--chat-val", default=None, help="val.jsonl from messenger-import")
+    q.add_argument("--pretrain-steps", type=int, default=None)
+    q.add_argument("--finetune-epochs", type=float, default=None, help="about how many passes over your chats the fine-tune makes (default 3)")
+    q.add_argument("--batch", type=int, default=None)
+    q.add_argument("--accum", type=int, default=None)
+    q.add_argument("--train-args", default=None, help="extra flags for train inside quotes, e.g. \"--precision bf16\"")
+    q.add_argument("--system", default=None, help="system line used by the chat command")
+    q = ps.add_parser("confirm", help="say OK to the decisions: needed before the tokenizer can be made")
+    q.add_argument("--dir", required=True)
+    q.add_argument("--yes", action="store_true")
+    q = ps.add_parser("plan", help="show every step with its exact command and whether it is done")
+    q.add_argument("--dir", required=True)
+    q = ps.add_parser("run", help="run ONE step (default: the next one that is not done)")
+    q.add_argument("--dir", required=True)
+    q.add_argument("--step", default="next", choices=["next"] + PL.STEP_ORDER)
+    s.set_defaults(fn=cmd_pipeline)
 
     s = sub.add_parser("check-gpu", help="check the PyTorch/GPU backend against the NumPy reference and print a report")
     s.add_argument("--device", default="auto")

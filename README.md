@@ -45,6 +45,17 @@ python -m persona_lm prepare --kind chat --tokenizer tok.json --data data_msgr/t
 ```
 Local only. Anonymized by default (names, phones, e-mails, links, addresses) with a self-audit; loss only on your replies; validation split by session. Tested on synthetic data only.
 
+## Guided pipeline (Stage 3; see docs/STAGE3_GUIDE.md)
+```bash
+python -m persona_lm pipeline init --dir work --languages en,tl --vocab 16000 --pretrain-text public_text/ --chat-train data_msgr/train.jsonl --chat-val data_msgr/val.jsonl
+python -m persona_lm pipeline plan --dir work            # every step with its exact command, warnings
+python -m persona_lm pipeline confirm --dir work --yes   # the tokenizer cannot be made before this, and is never overwritten afterwards
+python -m persona_lm pipeline run --dir work             # runs the next undone step (repeat)
+python -m persona_lm data-report --data-dir work/data_chat --size s10m --tokenizer work/tok.json
+python -m persona_lm status work
+```
+The chat screen has slash commands (`/help /reset /history /save /system /temp /max /quit`; `/memory /mood /identity /approve /reject` are placeholders for later stages).
+
 ## GPU training (Stage 1; see docs/GPU_GUIDE.md)
 ```bash
 python -m persona_lm check-gpu                       # does the GPU code match the NumPy reference on this machine?

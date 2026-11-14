@@ -2,13 +2,14 @@
 
 > **DO NOT DELETE OR REPLACE THIS FILE.** It lives at the root of the project (`persona_lm_project/HANDOFF.md`) and travels inside `persona_lm.zip`.
 > **Update it at the end of every stage** (append to the stage log in section 5, refresh sections 4, 6, 7, 12). A test (`tests/test_handoff.py`) fails if it is missing or loses its START HERE / stage-log / next-action sections.
-> Last updated: 2026-11-14 (project moved to `C:\Users\user\persona_lm_project`, GitHub upload started); before that 2026-11-13, end of **Stage 2** (Messenger importer + anonymizer) + owner's hardware facts, language requirement and the first REAL GPU check (9/9 PASS) recorded. Give this file to the next AI **together with `persona_lm.zip`**.
+> Last updated: 2026-11-14, end of **Stage 3 part 1** (guided pipeline, chat screen, status/data-report; real tokenizer NOT frozen) (project moved to `C:\Users\user\persona_lm_project`, GitHub upload started); before that 2026-11-13, end of **Stage 2** (Messenger importer + anonymizer) + owner's hardware facts, language requirement and the first REAL GPU check (9/9 PASS) recorded. Give this file to the next AI **together with `persona_lm.zip`**.
 
 ## START HERE (read this first, about 2 minutes)
 
 **State (2026-11-14).** Stage 0 audit: done. **Stage 1 GPU backend: done**, maths verified on the owner's RTX 3050 (`check-gpu` 9/9 PASS); real speed/memory not yet measured.
-**Stage 2 Messenger importer + anonymizer: done**, tested on SYNTHETIC data only (never on the owner's real export). **Stage 3 (train/chat CLI, pretrain-then-finetune flow, freezing the real tokenizer) is NEXT and NOT started.** Stages 4-9 not started.
-Tests: 102 (100 pass + 2 PyTorch tests that run on the owner's machine). The owner's last unit-test run HUNG because of a bug in my test (fixed, see the incident in section 5); they have to re-extract the newest zip.
+**Stage 2 Messenger importer + anonymizer: done**, tested on SYNTHETIC data only (never on the owner's real export).
+**Stage 3 is HALF done ("part 1")**: everything that did not depend on the owner's answers is built and tested on tiny synthetic data: `pipeline` (init/confirm/plan/run), the chat screen with slash commands, `status`, `data-report`. **Still to do in Stage 3 ("part 2")**: choose the public pretraining corpus with the owner, freeze the REAL tokenizer (needs answers 4 and 5 below), run the real pretrain + fine-tune, and look at real replies. Stages 4-9 not started.
+Tests: 135 (133 pass + 2 PyTorch tests that run on the owner's machine). The owner's last unit-test run HUNG because of a bug in my test (fixed, see the incident in section 5); they have to re-extract the newest zip.
 
 **Waiting on the owner (ask for these, do not guess):**
 1. the end of `python -m unittest discover -s tests` from the fixed zip (should say `Ran 102 tests ... OK`);
@@ -18,12 +19,12 @@ Tests: 102 (100 pass + 2 PyTorch tests that run on the owner's machine). The own
 5. an OK on `ctx=512` and the 32 reserved special tokens (defaults applied without a real answer: they said they did not understand);
 6. confirmation of the assumption "its own person, speaking in the owner's style".
 
-**What you can start before they answer:** the parts of Stage 3 that do not depend on those answers (guided pipeline commands, the chat REPL with slash-command stubs, a status/data-report command).
-**Do NOT freeze or train the real tokenizer** until items 4 and 5 are answered. Do not start Stage 4+ before Stage 3 is accepted.
+**What you can do before they answer:** nothing more in Stage 3 part 1 (done). Part 2 needs their answers. **Do NOT freeze or train the real tokenizer** until items 4 and 5 are answered (`pipeline run --step tokenizer` refuses until `pipeline confirm --yes`; only run confirm after the owner's explicit OK). Do not start Stage 4+ before Stage 3 is accepted.
 
 **How to work with this owner (learned the hard way):**
-- Not an expert. Windows 11 Home, PowerShell. Laptop: Acer Aspire 7, RTX 3050 6GB, 15.7 GB RAM, Python 3.14.6, torch 2.14.1+cu130, numpy 2.5.2. The project now lives at `C:\Users\user\persona_lm_project` (moved from the Desktop on 2026-11-14; always `cd C:\Users\user\persona_lm_project` before running commands). It is being put on the owner's GitHub as a PRIVATE repo named `persona_lm` (a `.gitignore` excludes `private/`, `*.jsonl`, checkpoints, models, `data/`, `runs/`, `exports/`; never commit real Messenger data). The owner copies commands straight from the chat.
+- Not an expert. Windows 11 Home, PowerShell. Laptop: Acer Aspire 7, RTX 3050 6GB, 15.7 GB RAM, Python 3.14.6, torch 2.14.1+cu130, numpy 2.5.2. The project now lives at `C:\Users\user\persona_lm_project` (moved from the Desktop on 2026-11-14; always `cd C:\Users\user\persona_lm_project` before running commands). It is being put on the owner's GitHub as a PRIVATE repo named `persona_lm` (a `.gitignore` excludes `private/`, `*.jsonl`, checkpoints, models, `data/`, `runs/`, `exports/`; never commit real Messenger data). The owner copies commands straight from the chat (markdown link syntax in a pasted command broke one: write plain URLs/paths, never `[text](url)` inside a command).
 - Give each command in its own code block. Never put two commands next to each other without a line break (a pasted pair got glued into one and failed). Never write a placeholder path without saying "replace this" (their export path command ran with my literal placeholder).
+- **OWNER'S STANDING RULE (do not delete this line; keep it when handing over to another AI): every command that touches the downloaded zip must use the `*` wildcard in the file name, because their browser renames downloads (`persona_lm (6).zip`). Never write a fixed name like `persona_lm.zip`. Use the newest match, e.g. `Get-ChildItem "$env:USERPROFILE\Downloads\persona_lm*.zip" | Sort-Object LastWriteTime -Descending | Select-Object -First 1 | Expand-Archive -DestinationPath C:\Users\user -Force`.** (Interpretation of the owner's words "the command must have this *": confirm with them if unsure.)
 - Say how long a command should take, and tell them to press Ctrl+C and paste the screen if it takes more than 2 minutes. A test that waited for the keyboard cost them 3 hours.
 - Always deliver the **complete project zip, not a patch**, plus the updated `HANDOFF.md` ("merge all files, don't give me just the update"). Before delivering: update this file, run the suite inside a pseudo-terminal (section 11), unzip the zip into a clean folder and run the tests from there, then present both files.
 - Say plainly what was NOT tested. Own mistakes briefly, fix them, verify, move on.
@@ -139,13 +140,18 @@ no-torch runtime must be separated), to avoid a risky refactor now. `backend.py`
 | `cli.py` | | Stage 2: `messenger-scan`, `messenger-import`, `prepare --val-data`, console-safe `main()`, tokenizer training dedups chat messages |
 | `docs/MESSENGER_GUIDE.md` (new, Stage 2) | How to export from Facebook, run the importer, what anonymization does/does not do, data-size honesty, pretrain-then-finetune commands | new |
 | `tests/test_messenger.py` (new, Stage 2) | 58 tests on a synthetic export; a module guard makes any accidental keyboard read fail instead of hang | new |
+| `pipeline.py` (new, Stage 3) | `project.json` (languages, vocab, ctx, size, paths), `init/confirm/plan/run`: one step at a time; tokenizer step needs confirmation and is never overwritten; fingerprint check on later steps; locked fields; script check (warns if a wanted script is missing from the tokenizer text) | new |
+| `chatrepl.py` (new, Stage 3) | `ChatSession` + `run_repl`: slash commands (`/help /reset /history /save /system /temp /max /quit`, stubs `/memory /mood /identity /approve /reject`), whole-message context trimming that keeps the system line, `//` escape; commands come only from the keyboard, never from model text | new; `generate.chat_loop` is now unused (kept) |
+| `report.py` (new, Stage 3) | `data-report` (tokens, examples, loss tokens, tokens/parameter verdict, passes over the data, tokenizer match) and `status` (scans a work folder, shows runs, warns when validation loss rises) | new |
+| `docs/STAGE3_GUIDE.md` (new, Stage 3) | Owner-facing walkthrough of the guided pipeline | new |
+| `tests/test_stage3.py` (new, Stage 3) | 33 tests incl. a whole tokenizer -> pretrain -> fine-tune run on tiny data and the real `chat` command with scripted typing; keyboard guard | new |
 | `docs/GPU_GUIDE.md` (new) | Beginner guide: laptop (Windows) + Google Colab + moving runs + privacy | new |
 | `tests/test_persona_lm.py` | original 26 tests | unchanged, still pass |
 | `tests/test_stage1.py` (new) | 15 NumPy-side tests | new |
 | `tests/test_torch_backend.py` (new) | runs `selfcheck` on CPU/GPU; **skipped without PyTorch** | new |
 | `tests/test_handoff.py` (new) | 1 test, fails if this file is missing | new |
 
-Run tests: `python -m unittest discover -s tests -v` -> **102 tests: 100 pass, 2 skipped** (with PyTorch installed the 2 skipped run too) (the PyTorch ones) in the author's sandbox.
+Run tests: `python -m unittest discover -s tests -v` -> **135 tests: 133 pass, 2 skipped** (the 2 skipped are the PyTorch ones; with PyTorch installed they run too) in the author's sandbox, also inside a pseudo-terminal.
 
 ## 5. Stage log
 
@@ -219,6 +225,20 @@ the two new modules contain no network imports.
   `setUpModule` makes any unexpected `input()` raise instead of wait, the typed-answers path now has its own test, and `choose_me` looks up `input` at call time. **Rule for every future stage: tests must not depend on the real stdin, and the full
   suite must be run inside a pseudo-terminal before delivery** (snippet in section 11).
 
+### Stage 3, part 1: guided pipeline, chat screen, reports (done; tiny synthetic data only; the real tokenizer is NOT frozen)
+**What was built:**
+- `pipeline init|confirm|plan|run --dir WORK` (`persona_lm/pipeline.py`). `init` records the decisions in `WORK/project.json` (languages, vocab, ctx, size, public text, chat train/val files from `messenger-import`, fine-tune settings); changing languages/vocab/ctx/size withdraws the confirmation; once `tok.json` exists vocab+languages are locked, once a checkpoint exists size+ctx are locked. `confirm --yes` is the owner's explicit OK. `plan` prints every step with its exact command (quoted for Windows paths) and done/NEXT markers, plus script warnings (e.g. Japanese wanted but no kana in the tokenizer text; English+Tagalog are both Latin so letters cannot prove both are present). `run` executes ONE step through the normal CLI (default: next undone). Steps: tokenizer -> pretrain-data -> pretrain -> chat-data -> finetune. Tokenizer step refuses without confirmation and refuses to overwrite `tok.json`; later steps refuse if `tok.json`'s fingerprint differs from the one stored in `project.json`. Without public pretraining text the two pretrain steps are marked skipped (with a warning that chats alone teach very little) and fine-tuning starts from scratch. Fine-tune steps are worked out from the data: `finetune_epochs` (default 3) x tokens / (batch x accum x ctx), at least 50, with lr 1e-4 -> 1e-5, warmup 20, `--init-from` the pretrained checkpoint.
+- Chat screen (`chatrepl.py`, used by `chat`): see section 4. Prompt = system line + as many NEWEST whole messages as fit (the old loop cut tokens from the front, even through the system line); the person is told once when old messages stop being seen; too-long message refused; `/save` never overwrites; typed text cannot forge role tokens (`allow_special=False`).
+- `data-report --data-dir D [--size --ctx --batch --accum --steps --tokenizer]`; `status [DIR]`.
+**Tested (tiny synthetic data, NumPy, no keyboard):** 33 new tests: loss-token and example counts equal a direct encode; tokenizer match/mismatch; verdict levels; `private/` never opened; validation-rise warning; command stubs change nothing and never reach the model; a model reply of `/quit` or `/approve` does not run a command; context trimming/system line/one-time notice; refusal of over-long messages; `/save`; scripted `run_repl`; end-to-end tokenizer -> pretrain -> chat data -> fine-tune through `pipeline run` (fine-tune uses `--init-from`, tokenizer hash identical in both checkpoints); the real `chat` command with scripted typing; frozen-tokenizer protection (overwrite, swap, locked fields); no-pretrain path; the full suite also passes inside a pseudo-terminal.
+**NOT tested / limitations**
+- Never run on real data, real-size models (`s10m`/`s30m`), the GPU path (`--backend torch`), or Windows. The tests use `--backend numpy` and the `tiny` size. On the owner's PC `pipeline run` will use torch automatically if no `--train-args "--backend numpy"` is given (same `train` command as before).
+- **Early stopping is NOT implemented.** Fine-tune length is chosen up front (about 3 passes); `status` warns when validation loss rose, but only the newest checkpoint plus one previous are kept, so the best one cannot be recovered. Idea for part 2: keep `ckpt.best.npz` when val loss improves (touches both backends: do it carefully).
+- The pretraining corpus is NOT chosen (no network in the author's sandbox; the owner's languages are unknown). Verdicts in `data-report` are rules of thumb (20 tokens/parameter is a generic web-scale rule, not a measurement for this project).
+- Chat generation is still NumPy-only on the CPU, no KV cache: slow at s30m / 512 tokens. Not measured on the owner's PC.
+- The `[ME]` / `Person_NN` / "its own person speaking in the owner's style" question (section 6 design note) is still open; the chat screen just feeds typed text as the `user` role with an optional `--system` line.
+- Script check only covers a few scripts and cannot separate languages sharing one alphabet.
+
 ## 6. Decisions
 
 **Made by the owner:**
@@ -259,7 +279,7 @@ confirmation of the "own person in the owner's speaking style" assumption; resul
 | 0 | Audit | done |
 | 1 | GPU backend | **done: check-gpu 9/9 PASS on RTX 3050; real speed/memory (benchmark) and a real training run still to be measured** |
 | 2 | Messenger importer + anonymizer | **done (synthetic data only; owner should run `messenger-scan` on the real export)** |
-| 3 | Train/chat CLI, pretrain-then-finetune flow (train the real tokenizer here) | **next** |
+| 3 | Train/chat CLI, pretrain-then-finetune flow (train the real tokenizer here) | **part 1 done** (pipeline, chat screen, status, data-report; tiny synthetic data). **Part 2 waiting on the owner**: languages, ctx/specials OK, pretraining corpus, then freeze the real tokenizer and run real training |
 | 4 | Memory graph (store, retrieval, decay/merge/summarize, Obsidian export, HTML graph) | |
 | 5 | Emotion + Person card | |
 | 6 | Identity core + lineage + regression tests (probes, scoring, drift, protected tier, distillation, checksums) | |
@@ -299,7 +319,7 @@ If you have a better environment, run `python -m persona_lm check-gpu` first and
 ## 11. How to maintain this file
 
 At the end of every stage: add a "Stage N" entry to section 5 (what was built, what was tested, what was NOT tested, limitations), update the status tables in 4, 6, 7, 8,
-bump the "Last updated" line, run the tests, and rebuild `persona_lm.zip` with this file inside. Never delete it. If you are a different AI taking over, read sections 1-3 and 5-6 first.
+bump the "Last updated" line, run the tests, and rebuild `persona_lm.zip` with this file inside. Never delete it, and never remove the owner's standing rules in section START HERE (the `*` wildcard rule for zip commands included). If you are a different AI taking over, read sections 1-3 and 5-6 first.
 
 Pseudo-terminal check before every delivery (the sandbox's stdin is a pipe, the owner's is a terminal; behaviours that differ between them must be tested):
 
@@ -312,12 +332,10 @@ print(p.returncode, p.stdout.decode()[-200:])      # a TimeoutExpired here means
 
 ## 12. Next action
 
-0. The owner's unit-test run is the one that hung (see the incident in section 5); they must re-extract the new zip. A quick proof on their machine without re-downloading: `cmd /c "python -m unittest discover -s tests < NUL"`.
-1. Owner has PyTorch installed (note: their network first failed DNS lookups for download.pytorch.org; it worked later) and `check-gpu` passed. Ask for: (a) the END of `python -m unittest discover -s tests` on their machine (Ran N tests / OK);
-   (b) `python -m persona_lm benchmark --size s10m --vocab 16000 --try-batches 1,2,4,8,16,32` and the same for `s30m` (real tokens/s, peak memory, largest micro-batch on 6 GB; also the first real bf16 training steps);
-   (c) their Messenger export folder (`Get-ChildItem "$env:USERPROFILE\Downloads","$env:USERPROFILE\Desktop","$env:USERPROFILE\Documents" -Recurse -Filter message_1.json -ErrorAction SilentlyContinue | Select-Object -First 3 FullName`;
-   nothing found = not downloaded yet: docs/MESSENGER_GUIDE.md section 1), then `messenger-scan`; (d) the languages.
-2. **Stage 3** (train/chat CLI + pretrain-then-finetune flow): a single guided command or script set for tokenizer -> pretrain -> chat fine-tune; a better `chat` REPL with the slash commands
-   (`/memory /mood /identity /approve /reject /save /quit`, initially stubs that say which stage implements them), KV-cache-free generation is fine for now; decide the pretraining corpus with the owner;
-   **freeze the real tokenizer** (re-explain `ctx=512` and the 32 reserved tokens first, get an OK); a `data-report`/`status` command; document the schedule for fine-tuning (low LR, few epochs, early stop on validation loss).
+0. The owner re-extracts the newest zip (project folder `C:\Users\user\persona_lm_project`; the previous unit-test run hung because of a since-fixed test bug). Quick proof without waiting on the keyboard: `cmd /c "python -m unittest discover -s tests < NUL"` (expect `Ran 135 tests ... OK (skipped=...)`; with PyTorch the 2 skipped ones run).
+1. Ask the owner for (do not guess): (a) the end of the unit-test run; (b) `python -m persona_lm benchmark --size s10m --vocab 16000 --try-batches 1,2,4,8,16,32` and the same for `s30m`;
+   (c) their Messenger export folder (`Get-ChildItem "$env:USERPROFILE\Downloads","$env:USERPROFILE\Desktop","$env:USERPROFILE\Documents" -Recurse -Filter message_1.json -ErrorAction SilentlyContinue | Select-Object -First 3 FullName`; nothing found = not downloaded yet: docs/MESSENGER_GUIDE.md section 1), then `messenger-scan`;
+   (d) the languages; (e) OK on `ctx=512` and the 32 reserved tokens (explain in plain words first); (f) confirmation of "its own person, speaking in the owner's style".
+2. **Stage 3 part 2** once (c)-(e) are answered: help choose public text in the owner's languages (they must download it; the sandbox has no network and PyTorch/large downloads are painful for them); `messenger-import` -> `pipeline init` -> `pipeline plan` (read the script warnings with them) -> `pipeline confirm --yes` ONLY after their explicit OK -> `pipeline run` one step at a time, checking `data-report` before each training step and `status` after; look at real replies; consider the `ckpt.best.npz` idea (see Stage 3 limitations).
+   Stage 3 is accepted only when the owner says so; then start Stage 4 (memory graph).
 3. If the benchmark/unit tests expose problems in `torch_backend.py` (fp16 loss scaling, memory), fix them before relying on long runs.
