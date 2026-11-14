@@ -1,5 +1,6 @@
 """Command line: python -m persona_lm <command> ...   (see README.md for the whole workflow)"""
 import argparse
+from collections import Counter
 import json
 import os
 import shlex
@@ -18,6 +19,8 @@ from . import report as R
 from .chatrepl import ChatSession, run_repl
 from . import memory as MEM
 from . import memory_export as MEX
+from . import emotion as EMO
+from . import person as PER
 from .generate import complete, sample_ids
 from .gguf import export_model, params_from_gguf, read_gguf
 from .model import PRESETS, Config, forward, init_params, loss_and_grads, preset, zero_grads
@@ -168,12 +171,30 @@ def cmd_chat(a):
             store = MEM.MemoryStore(a.memory)
         except MEM.MemoryProblem as e:
             raise SystemExit("error: %s" % e)
+    mood = tagger = card = None
+    try:                                                # Stage 5 files are checked BEFORE the model loads, too
+        if getattr(a, "mood", None):
+            model = EMO.NaiveBayes.load(a.emotion_model) if getattr(a, "emotion_model", None) else None
+            extra = EMO.load_lexicon_file(a.lexicon) if getattr(a, "lexicon", None) else None
+            tagger = EMO.Tagger(model, extra)
+            mood = EMO.Mood(a.mood)
+        elif getattr(a, "emotion_model", None) or getattr(a, "lexicon", None):
+            raise SystemExit("error: --emotion-model and --lexicon only work together with --mood FILE")
+        if getattr(a, "person", None):
+            card = PER.load(a.person)
+    except (EMO.EmotionProblem, PER.PersonProblem) as e:
+        raise SystemExit("error: %s" % e)
     params, cfg, tok = _load_model(a)
     session = ChatSession(tok, cfg.ctx, lambda ids, **kw: sample_ids(params, cfg, ids, **kw), system=a.system, save_dir=a.save_dir,
                           settings={"max_new": a.max_new, "temperature": a.temperature, "top_k": a.top_k},
-                          memory=store, memory_tokens=a.memory_tokens)
+                          memory=store, memory_tokens=a.memory_tokens, mood=mood, tagger=tagger, person=card,
+                          person_tokens=getattr(a, "person_tokens", None))
     if store is not None:
         print("Memory file: %s (%s)" % (a.memory, store.overview().splitlines()[0]))
+    if mood is not None:
+        print("Mood file: %s (%s)" % (a.mood, mood.describe().split(" (")[0]))
+    if card is not None:
+        print("Person card: %s" % a.person)
     run_repl(session)
 
 
@@ -271,6 +292,142 @@ def _memory_action(a):
         print("Warning: the graph page contains your personal memories as plain text. Keep it on this computer.")
         r = MEX.export_graph(store, a.out)
         print("Wrote %s (%d nodes, %d links). Open it by double-clicking; no internet needed." % (r["file"], r["nodes"], r["edges"]))
+
+
+def cmd_emotion(a):
+    """python -m persona_lm emotion <tag|label|review|train|report|tag-memories> ... (Stage 5)."""
+    try:
+        _emotion_action(a)
+    except (EMO.EmotionProblem, MEM.MemoryProblem, OSError) as e:
+        raise SystemExit("error: %s" % e)
+
+
+def _tagger_from(a):
+    model = EMO.NaiveBayes.load(a.model) if getattr(a, "model", None) else None
+    extra = EMO.load_lexicon_file(a.lexicon) if getattr(a, "lexicon", None) else None
+    return EMO.Tagger(model, extra)
+
+
+def _emotion_action(a):
+    act = a.action
+    if act == "tag":
+        print(_tagger_from(a).tag(" ".join(a.text)).describe())
+    elif act == "label":
+        texts = EMO.owner_messages(a.data)
+        if not texts:
+            raise EMO.EmotionProblem("No messages of yours (assistant turns with loss on) found in %s. Use the train.jsonl made by messenger-import." % ", ".join(a.data))
+        rows = EMO.make_samples(texts, _tagger_from(a), neutral_ratio=a.neutral_ratio, limit=a.limit, seed=a.seed)
+        EMO.write_samples(a.out, rows)
+        counts = Counter(r["label"] for r in rows)
+        print("Wrote %s: %d of your messages with a guessed feeling (from %d distinct messages)." % (a.out, len(rows), len(texts)))
+        print("  " + ", ".join("%s %d" % (l, counts[l]) for l in EMO.LABEL_ORDER if counts[l]))
+        print("The guesses come from a word list, so they are weak. Correct some with:  python -m persona_lm emotion review --samples %s" % a.out)
+        print("This file contains your messages. Keep it on this computer.")
+    elif act == "review":
+        EMO.review(a.samples, input, count=a.count, seed=a.seed, include_neutral=a.include_neutral)
+    elif act == "train":
+        rows = EMO.read_samples(a.samples)
+        if len(rows) < 30:
+            raise EMO.EmotionProblem("Only %d samples: too few to learn from. Make more with `emotion label` (from a bigger train.jsonl)." % len(rows))
+        model, rep = EMO.train_from_samples(rows, owner_weight=a.owner_weight, min_count=a.min_count)
+        model.save(a.out)
+        print("Wrote %s (%d words and word pieces learned from %d messages, %d corrected by you)." % (a.out, model.data["vocab"], rep["messages"], rep["fixed"]))
+        if "agrees_with_word_list" in rep:
+            print("On %d held-out messages the learner agrees with the guessed/corrected labels %.0f%% of the time." % (rep["held_out"], 100 * rep["agrees_with_word_list"]))
+            print("  (This is NOT accuracy: most labels are the word list's own guesses. Only your corrections are real answers.)")
+        if "fixed_right_with_model" in rep:
+            print("On %d held-out messages YOU corrected: word list alone right %.0f%%, word list + learner right %.0f%%." % (
+                rep["fixed_held_out"], 100 * rep["fixed_right_words_only"], 100 * rep["fixed_right_with_model"]))
+        elif rep["fixed"] < 50:
+            print("You have corrected %d messages. Correct at least 50-100 (emotion review) before trusting any number here." % rep["fixed"])
+    elif act == "report":
+        rows = EMO.read_samples(a.samples)
+        guess, fixed = Counter(r["label"] for r in rows), Counter(r["fixed"] for r in rows if r["fixed"])
+        print("%d samples, %d corrected by you." % (len(rows), sum(fixed.values())))
+        print("%-10s %8s %10s" % ("feeling", "guessed", "corrected"))
+        for l in EMO.LABEL_ORDER:
+            print("%-10s %8d %10d" % (l, guess[l], fixed[l]))
+        changed = sum(1 for r in rows if r["fixed"] and r["fixed"] != r["label"])
+        print("You disagreed with the word list on %d of %d corrected messages." % (changed, sum(fixed.values())))
+    elif act == "tag-memories":
+        store = MEM.MemoryStore(a.memory)
+        tagger = _tagger_from(a)
+        plan = []
+        for m in sorted(store.memories.values(), key=lambda m: m["id"]):
+            if m["status"] == "active" and m["emotion"] == "neutral":
+                tag = tagger.tag(m["text"])
+                if tag.label != "neutral" and tag.confidence >= a.min_confidence:
+                    plan.append((m, tag))
+        print("Plan (nothing changes unless you add --apply): %d memor%s still tagged neutral would get a feeling." % (len(plan), "y" if len(plan) == 1 else "ies"))
+        for m, tag in plan:
+            print("  %s  neutral -> %s (sure %.0f%%; %s)   %s" % (m["id"], tag.label, 100 * tag.confidence, ", ".join(tag.evidence) or "learned words", m["text"][:70]))
+        if a.apply and plan:
+            for m, tag in plan:
+                m["emotion"] = tag.label
+            store.log("tag-emotions", [m["id"] for m, _ in plan])
+            store.save()
+            print("Applied. (Previous version kept as %s)" % store._backup_path())
+
+
+def cmd_mood(a):
+    try:
+        mood = EMO.Mood(a.file)
+    except EMO.EmotionProblem as e:
+        raise SystemExit("error: %s" % e)
+    if a.action == "show":
+        print(mood.describe() + ("" if os.path.exists(a.file) else "  (no mood file yet: it is created by `chat --mood`)"))
+        for h in mood.history[-5:]:
+            print("  recent: %s (sure %.0f%%)" % (h["label"], 100 * h["confidence"]))
+    elif a.action == "reset":
+        mood.reset()
+        mood.save()
+        print("Mood reset to the baseline. " + mood.describe())
+
+
+def cmd_person(a):
+    try:
+        _person_action(a)
+    except (PER.PersonProblem, EMO.EmotionProblem, MEM.MemoryProblem, OSError) as e:
+        raise SystemExit("error: %s" % e)
+
+
+def _person_action(a):
+    path = a.file
+    if a.action == "init":
+        if os.path.exists(path):
+            raise PER.PersonProblem("%s already exists; nothing was overwritten." % path)
+        PER.save(PER.new_card(a.name), path, keep_backup=False)
+        print("Made %s. Open it with Notepad and fill in Habits and Values yourself; `person build` fills Speaking style, Frequent words and Relationships from your data." % path)
+    elif a.action == "show":
+        print(PER.load(path).render(), end="")
+    elif a.action == "add":
+        card = PER.load(path)
+        card.add_owner(a.section, " ".join(a.text))
+        PER.save(card, path)
+        print("Added to %s." % PER.Card._canonical(a.section))
+    elif a.action == "build":
+        card = PER.load(path)
+        texts = EMO.owner_messages(a.data) if a.data else None
+        store = MEM.MemoryStore(a.memory) if a.memory else None
+        if texts is None and store is None:
+            raise PER.PersonProblem("Give --data train.jsonl (your messages) and/or --memory memory.json (people you remember).")
+        if texts is not None and len(texts) < 20:
+            print("Only %d of your messages found: too few to describe your style, so Speaking style and Frequent words are left alone." % len(texts))
+            texts = None
+        plan = PER.plan_build(card, texts, store)
+        print("Build plan (nothing changes unless you add --apply):")
+        for title, text in plan["remove"]:
+            print("  - [%s] %s" % (title, text))
+        for title, text in plan["add"]:
+            print("  + [%s] %s" % (title, text))
+        if not plan["add"] and not plan["remove"]:
+            print("  nothing to change.")
+        elif a.apply:
+            PER.apply_plan(card, plan)
+            PER.save(card, path)
+            print("Applied. Lines you wrote yourself were not touched. (Previous version kept as %s)" % (path[:-3] + ".prev.md" if path.endswith(".md") else path + ".prev"))
+        else:
+            print("Lines marked [auto] are only suggestions. To keep one for good delete the word [auto]; to ban it change [auto] to [no].")
 
 
 def cmd_status(a):
@@ -470,6 +627,11 @@ def build_parser():
             s.add_argument("--save-dir", default=".", help="where /save writes conversations (this computer only)")
             s.add_argument("--memory", default=None, help="memory file (Stage 4): turns on /memory /remember /forget and recall into the prompt")
             s.add_argument("--memory-tokens", type=int, default=None, help="most tokens of the window that recalled memories may use (default: a fifth of the window)")
+            s.add_argument("--mood", default=None, help="mood file (Stage 5): turns on /mood, a mood block in the prompt and a small temperature effect (created on first save)")
+            s.add_argument("--emotion-model", default=None, help="a model made by `emotion train` (needs --mood); without it only the word list reads your feelings")
+            s.add_argument("--lexicon", default=None, help="JSON of extra feeling words, e.g. {\"anger\": [\"inis\"]} (needs --mood)")
+            s.add_argument("--person", default=None, help="your Person card (Stage 5; made by `person init`): put into the prompt as the speaker block")
+            s.add_argument("--person-tokens", type=int, default=None, help="most tokens of the window the Person card may use (default: a sixth of the window)")
         if name == "export-gguf":
             s.add_argument("--out", required=True)
             s.add_argument("--type", choices=["f32", "f16", "q8_0"], default="f16")
@@ -560,6 +722,58 @@ def build_parser():
     q = ms.add_parser("export-graph", help="one HTML file with the force-directed graph (needs no internet)")
     q.add_argument("out")
     s.set_defaults(fn=cmd_memory)
+
+    s = sub.add_parser("emotion", help="Stage 5: read the feeling in a message, learn it from your chats, tag memories")
+    es = s.add_subparsers(dest="action", required=True)
+    def _tag_args(q):
+        q.add_argument("--model", default=None, help="a model made by `emotion train`")
+        q.add_argument("--lexicon", default=None, help="JSON of extra feeling words, e.g. {\"anger\": [\"inis\"]}")
+    q = es.add_parser("tag", help="how would this text be read? (changes nothing)")
+    q.add_argument("text", nargs="+"); _tag_args(q)
+    q = es.add_parser("label", help="make a samples file: your messages with a guessed feeling (a new file; never overwrites)")
+    q.add_argument("--data", nargs="+", required=True, help="train.jsonl made by messenger-import")
+    q.add_argument("--out", required=True)
+    q.add_argument("--neutral-ratio", type=float, default=3.0, help="keep this many times as many no-feeling messages as feeling ones (default 3)")
+    q.add_argument("--limit", type=int, default=None)
+    q.add_argument("--seed", type=int, default=1)
+    q.add_argument("--lexicon", default=None, help="JSON of extra feeling words, e.g. {\"anger\": [\"inis\"]}")
+    q = es.add_parser("review", help="correct the guesses by hand, one message at a time (answers are saved at once)")
+    q.add_argument("--samples", required=True)
+    q.add_argument("--count", type=int, default=20)
+    q.add_argument("--seed", type=int, default=1)
+    q.add_argument("--include-neutral", action="store_true")
+    q = es.add_parser("train", help="learn from the samples file and write the emotion model")
+    q.add_argument("--samples", required=True)
+    q.add_argument("--out", required=True)
+    q.add_argument("--owner-weight", type=float, default=5.0, help="how much more your corrections count than the word list's guesses (default 5)")
+    q.add_argument("--min-count", type=int, default=2, help="drop words seen fewer times than this (default 2)")
+    q = es.add_parser("report", help="how many guesses and corrections per feeling")
+    q.add_argument("--samples", required=True)
+    q = es.add_parser("tag-memories", help="give memories that are still tagged neutral a feeling (a plan; --apply does it)")
+    q.add_argument("--memory", default="memory.json")
+    q.add_argument("--min-confidence", type=float, default=0.5)
+    q.add_argument("--apply", action="store_true"); _tag_args(q)
+    s.set_defaults(fn=cmd_emotion)
+
+    s = sub.add_parser("mood", help="Stage 5: look at or reset the saved mood")
+    s.add_argument("--file", default="mood.json")
+    ms2 = s.add_subparsers(dest="action", required=True)
+    ms2.add_parser("show"); ms2.add_parser("reset")
+    s.set_defaults(fn=cmd_mood)
+
+    s = sub.add_parser("person", help="Stage 5: your Person card, a plain file built partly from your data")
+    s.add_argument("--file", default="person_card.md")
+    ps2 = s.add_subparsers(dest="action", required=True)
+    q = ps2.add_parser("init", help="make a new card (never overwrites)")
+    q.add_argument("--name", default=None)
+    ps2.add_parser("show")
+    q = ps2.add_parser("add", help="add a line you write yourself: person add Values I care about my family first")
+    q.add_argument("section"); q.add_argument("text", nargs="+")
+    q = ps2.add_parser("build", help="show what could be filled in from your data (a plan; --apply writes it)")
+    q.add_argument("--data", nargs="+", default=None, help="train.jsonl from messenger-import: your messages")
+    q.add_argument("--memory", default=None, help="memory.json: the people you remember")
+    q.add_argument("--apply", action="store_true")
+    s.set_defaults(fn=cmd_person)
 
     s = sub.add_parser("check-gpu", help="check the PyTorch/GPU backend against the NumPy reference and print a report")
     s.add_argument("--device", default="auto")

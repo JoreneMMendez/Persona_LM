@@ -182,7 +182,7 @@ class ChatTests(Base):
         s = self.session()
         s.handle("hello")
         before = list(s.history)
-        for cmd, stage in (("/mood", 5), ("/identity", 6), ("/approve", 7), ("/reject", 7)):
+        for cmd, stage in (("/identity", 6), ("/approve", 7), ("/reject", 7)):          # /mood became real in Stage 5 (tests/test_stage5.py)
             text, quit_ = s.handle(cmd)
             self.assertIn("Stage %d" % stage, text)
             self.assertIn("Nothing was changed", text)
@@ -268,12 +268,12 @@ class ChatTests(Base):
 
     def test_repl_loop_with_scripted_typing(self):
         s = self.session()
-        typed = iter(["hello", "/mood", "", "/quit", "never reached"])
+        typed = iter(["hello", "/identity", "", "/quit", "never reached"])
         shown = []
         chatrepl.run_repl(s, input_fn=lambda prompt: next(typed), out=shown.append)
         text = "\n".join(shown)
         self.assertIn("ai> sure thing", text)
-        self.assertIn("Stage 5", text)
+        self.assertIn("Stage 6", text)
         self.assertEqual(len(self.gen.calls), 1)
 
     def test_repl_ends_cleanly_on_end_of_input(self):
@@ -364,14 +364,14 @@ class PipelineTests(Base):
         PL.confirm_decisions(self.work)
         for _ in range(5):
             PL.run_step(self.work, "next", cli.main, log=lambda *_: None)
-        typed = iter(["hello", "/mood", "/save out.txt", "/quit"])
+        typed = iter(["hello", "/identity", "/save out.txt", "/quit"])
         buf = io.StringIO()
         with mock.patch("builtins.input", lambda prompt="": next(typed)), contextlib.redirect_stdout(buf):
             cli.main(["chat", "--ckpt", self.p("work", "run_chat", "ckpt.npz"), "--tokenizer", self.p("work", "tok.json"),
                       "--max-new", "6", "--save-dir", self.root])
         out = buf.getvalue()
         self.assertIn("Chat ready", out)
-        self.assertIn("Stage 5", out)
+        self.assertIn("Stage 6", out)
         self.assertTrue(os.path.exists(self.p("out.txt")))
 
     def test_a_frozen_tokenizer_is_never_overwritten_or_swapped(self):

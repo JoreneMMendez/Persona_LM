@@ -3,7 +3,11 @@
 Design rules (they matter for Stage 7, when the AI may PROPOSE changes):
   * Commands are read ONLY from what the person types. The model's replies are never looked at for commands, so nothing the AI
     writes (or anything in its training data) can run /approve, /reject or any other command.
-  * /mood /identity /approve /reject exist already but are honest stubs: they say which stage builds them and change nothing.
+  * /identity /approve /reject exist already but are honest stubs: they say which stage builds them and change nothing.
+  * /mood (Stage 5) works when the chat was started with --mood FILE. Only what the person TYPES moves the mood (each message is tagged by the
+    emotion tagger); the model's own words never do, a refused or empty-reply turn leaves the mood as it was. The mood goes into the prompt as one
+    block  <|mood|> label valence arousal <|end|>  after the system line, and nudges the sampling temperature by at most 15 %.
+  * --person FILE (Stage 5) puts the owner's Person card into the prompt as  <|speaker|> Name: ... <|end|>  (whole facts only, within a budget).
   * /memory /remember /forget (Stage 4) work only when the chat was started with a memory file (--memory). Memories are added or removed only
     by these typed commands; the AI's own words never reach the memory file. Recalled memories are put into the prompt after the system
     line as one block  <|memory|> - fact - fact <|end|>  and cost part of the window.
@@ -12,12 +16,13 @@ Design rules (they matter for Stage 7, when the AI may PROPOSE changes):
 import os
 import time
 
-from .bpe import ASSISTANT, END, MEMORY, ROLE_ID
+from .bpe import ASSISTANT, END, MEMORY, MOOD, ROLE_ID, SPEAKER
+from . import emotion as EMO
+from . import person as PER
 from .memory import MemoryConflict, MemoryProblem, parse_remember
 
 # command -> (stage that builds it, what it will do)
 PLANNED = {
-    "/mood":     (5, "show the AI's current emotional state"),
     "/identity": (6, "show the AI's identity card (name, personality, values) and its version history"),
     "/approve":  (7, "approve a change the AI has PROPOSED to its memory, settings or training"),
     "/reject":   (7, "reject a change the AI has proposed"),
@@ -31,19 +36,21 @@ HELP = """Commands (type them at the  you>  prompt):
   /remember <text>  (needs --memory) remember something, e.g.  /remember [[person:Maria]] is my sister #love *0.9 !pin
                     ([[Name]] or [[kind:Name]] makes a node; #emotion, *importance 0-1 and !pin go at the END)
   /forget <id>      (needs --memory) delete one memory for good, e.g. /forget m0003
+  /mood             (needs --mood) the AI's current feeling; /mood tag <text> shows how a text would be read; /mood reset goes back to the baseline
   /save [file]      write the conversation to a text file on this computer (never overwrites)
   /system <text>    set the system line (how the AI is introduced to itself) and start again
   /temp <0-2>       randomness of the replies (0 = always the most likely word, 0.8 = default)
   /max <n>          longest reply in tokens
   /quit             leave
   //text            send a message that starts with a slash, e.g. //shrug
-Not built yet (they only explain what they will do): /mood /identity /approve /reject"""
+Not built yet (they only explain what they will do): /identity /approve /reject"""
 
 
 class ChatSession:
     """One conversation. generate(prompt_ids, seed=..., max_new=..., temperature=..., top_k=...) -> list of new token ids."""
 
-    def __init__(self, tok, ctx, generate, system=None, save_dir=".", settings=None, seed=0, clock=time.time, memory=None, memory_tokens=None):
+    def __init__(self, tok, ctx, generate, system=None, save_dir=".", settings=None, seed=0, clock=time.time, memory=None, memory_tokens=None,
+                 mood=None, tagger=None, person=None, person_tokens=None):
         self.tok, self.ctx, self.generate = tok, ctx, generate
         self.system = system
         self.save_dir = save_dir
@@ -59,6 +66,13 @@ class ChatSession:
         self.memory_tokens = memory_tokens if memory_tokens is not None else max(16, ctx // 5)
         self.last_recalled = []                 # memory ids put into the newest prompt
         self.last_unfit = 0                     # how many matching memories were left out because they did not fit the budget
+        self.mood = mood                        # an emotion.Mood, or None (mood switched off)
+        self.tagger = tagger or (EMO.Tagger() if mood is not None else None)
+        self.last_tag = None                    # how the newest typed message was read
+        self.person = person                    # a person.Card, or None
+        self.person_tokens = person_tokens if person_tokens is not None else max(16, ctx // 6)
+        self.last_person_left = 0                # card facts that did not fit the budget
+        self._told_about_card = False
 
     # ------------------------------------------------------------ what the model sees
     def _message_ids(self, role, text):
@@ -84,14 +98,34 @@ class ChatSession:
         text = "\n".join(self.memory.line_for_prompt(m) for m, _, _ in found)
         return [MEMORY] + self.tok.encode(text, allow_special=False) + [END]
 
+    def _speaker_block(self, room):
+        """<|speaker|> Name: ... <|end|> from the Person card; whole facts only; at most a quarter of the room left after the system line."""
+        self.last_person_left = 0
+        if self.person is None:
+            return []
+        cap = min(self.person_tokens, room // 4) - 2
+        if cap <= 0:
+            self.last_person_left = sum(len(self.person.facts(t, ("owner", "auto"))) for t in PER.PROMPT_ORDER)
+            return []
+        text, used, left = PER.prompt_text(self.person, lambda s: len(self.tok.encode(s, allow_special=False)), cap)
+        self.last_person_left = left
+        return [SPEAKER] + self.tok.encode(text, allow_special=False) + [END] if used else []
+
+    def _mood_block(self):
+        if self.mood is None:
+            return []
+        return [MOOD] + self.tok.encode(self.mood.prompt_text(), allow_special=False) + [END]
+
     def build_prompt(self):
         """System line first, then as many of the NEWEST whole messages as fit. Returns (ids, dropped_message_count) or (None, reason)."""
         budget = self.prompt_budget() - 1                             # 1 = the final "assistant" marker
         system_ids = self._message_ids("system", self.system) if self.system else []
         if len(system_ids) > budget // 2:
             return None, "The system line is too long (%d tokens; at most %d)." % (len(system_ids), budget // 2)
-        memory_ids = self._memory_block(budget - len(system_ids))
-        room = budget - len(system_ids) - len(memory_ids)
+        speaker_ids = self._speaker_block(budget - len(system_ids))
+        mood_ids = self._mood_block()
+        memory_ids = self._memory_block(budget - len(system_ids) - len(speaker_ids) - len(mood_ids))
+        room = budget - len(system_ids) - len(speaker_ids) - len(mood_ids) - len(memory_ids)
         keep = []
         for role, text in reversed(self.history):
             ids = self._message_ids(role, text)
@@ -103,7 +137,7 @@ class ChatSession:
             last = self._message_ids(*self.history[-1])
             return None, "That message is too long for the model's window (%d tokens; at most %d). Send something shorter." % (len(last), budget - len(system_ids))
         dropped = len(self.history) - len(keep)
-        ids = list(system_ids) + memory_ids
+        ids = list(system_ids) + speaker_ids + mood_ids + memory_ids
         for m in reversed(keep):
             ids += m
         return ids + [ASSISTANT], dropped
@@ -122,18 +156,36 @@ class ChatSession:
 
     def say(self, text):
         self.history.append(("user", text))
+        snap = None
+        if self.mood is not None:                                   # the typed message moves the mood BEFORE the prompt is built, so the AI sees it
+            snap = self.mood.snapshot()
+            self.last_tag = self.tagger.tag(text)
+            self.mood.update(self.last_tag, now=self.clock())
         ids, info = self.build_prompt()
         if ids is None:
             self.history.pop()
+            if snap is not None:
+                self.mood.restore(snap)                               # a refused message changes nothing
             return info
         self.last_dropped = info
-        reply = self.tok.decode(self.generate(ids, seed=self.seed + self.turn, **self.settings)).strip()
+        settings = dict(self.settings)
+        if self.mood is not None:
+            settings["temperature"] = round(min(2.0, settings["temperature"] * self.mood.temperature_factor()), 4) if settings["temperature"] > 0 else 0
+        reply = self.tok.decode(self.generate(ids, seed=self.seed + self.turn, **settings)).strip()
         self.turn += 1
         if not reply:
             self.history.pop()
+            if snap is not None:
+                self.mood.restore(snap)
             return "(the model produced an empty reply: just send your message again, or try /temp 1.0)"
         self.history.append(("assistant", reply))
         out = "ai> " + reply
+        if self.mood is not None:
+            out += "\n(feeling now: %s; /mood shows more)" % self.mood.label
+            try:
+                self.mood.save()
+            except OSError as e:
+                out += "\n(could not save the mood file: %s)" % e
         if self.last_unfit and not self.last_recalled:
             out += "\n(note: %d memor%s matched but did not fit in the memory budget of %d tokens, so the AI did not see %s. " \
                    "A bigger window or --memory-tokens helps.)" % (self.last_unfit, "y" if self.last_unfit == 1 else "ies", self.memory_tokens,
@@ -145,6 +197,10 @@ class ChatSession:
                 self.memory.save()
             except (MemoryConflict, OSError) as e:
                 out += "\n(could not save the memory file: %s)" % e
+        if self.last_person_left and not self._told_about_card:
+            self._told_about_card = True
+            out += "\n(note: %d line(s) of your Person card did not fit the card budget of %d tokens, so the AI did not see them. --person-tokens or a bigger window helps; the most useful lines come first.)" % (
+                self.last_person_left, self.person_tokens)
         if info and not self._told_about_window:
             self._told_about_window = True
             out += "\n(note: the AI's window is %d tokens, so it no longer sees the oldest %d message(s) of this conversation. /history still shows everything.)" % (self.ctx, info)
@@ -195,6 +251,8 @@ class ChatSession:
             return self.save(arg), False
         if name in ("/memory", "/remember", "/forget"):
             return self.memory_command(name, arg), False
+        if name == "/mood":
+            return self.mood_command(arg), False
         if name in PLANNED:
             stage, what = PLANNED[name]
             msg = "%s is not built yet. It is planned for Stage %d: it will %s. Nothing was changed." % (name, stage, what)
@@ -202,6 +260,31 @@ class ChatSession:
                 msg += " (When it exists, approvals will be read only from your keyboard, never from anything the AI writes.)"
             return msg, False
         return "Unknown command %s. Type /help. (To send a message that starts with a slash, start it with two slashes.)" % name, False
+
+    def mood_command(self, arg):
+        if self.mood is None:
+            return "Mood is not switched on for this chat. Start it with:  python -m persona_lm chat ... --mood mood.json"
+        sub, _, rest = arg.partition(" ")
+        sub = sub.lower()
+        if sub == "tag":
+            if not rest.strip():
+                return "Usage: /mood tag <text>   (shows how that text would be read; changes nothing)"
+            return self.tagger.tag(rest).describe()
+        if sub == "reset":
+            self.mood.reset()
+            try:
+                self.mood.save()
+            except OSError as e:
+                return "Back at the baseline, but the mood file could not be saved: %s" % e
+            return "Mood reset to the baseline.\n" + self.mood.describe()
+        if sub:
+            return "Usage: /mood   or   /mood tag <text>   or   /mood reset"
+        lines = [self.mood.describe()]
+        if self.last_tag is not None:
+            lines.append("Your last message was read as: " + self.last_tag.describe())
+        lines.append("In the prompt the AI sees:  <|mood|> %s <|end|>.  Real changes in tone need a model trained with mood blocks (not done yet); " % self.mood.prompt_text()
+                     + "until then the only effect is a small change of the sampling temperature.")
+        return "\n".join(lines)
 
     def memory_command(self, name, arg):
         if self.memory is None:

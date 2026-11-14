@@ -1,4 +1,4 @@
-﻿private/
+private/
 *.jsonl
 *.npz
 *.gguf
@@ -18,3 +18,9 @@ memory.json.tmp
 vault/
 memory_graph.html
 memory/
+mood.json
+mood.prev.json
+person_card.md
+person_card.prev.md
+emotion_samples.jsonl
+emotion_model.json

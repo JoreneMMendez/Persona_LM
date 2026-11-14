@@ -67,6 +67,18 @@ python -m persona_lm chat --ckpt runs/chat/ckpt.npz --tokenizer tok.json --memor
 ```
 Memories live in `memory.json` outside the model. Only typed commands change them. Recall is by words and names, not meaning. Tested on synthetic data only.
 
+## Emotion, mood and Person card (Stage 5; see docs/EMOTION_GUIDE.md)
+```bash
+python -m persona_lm emotion tag "pagod na ako sooo"
+python -m persona_lm emotion label --data data_msgr/train.jsonl --out emotion_samples.jsonl
+python -m persona_lm emotion review --samples emotion_samples.jsonl      # correct guesses by typing; saved at once
+python -m persona_lm emotion train --samples emotion_samples.jsonl --out emotion_model.json
+python -m persona_lm person init --name "Your name"
+python -m persona_lm person build --data data_msgr/train.jsonl --memory memory.json      # a plan; add --apply
+python -m persona_lm chat --ckpt runs/chat/ckpt.npz --tokenizer tok.json --mood mood.json --emotion-model emotion_model.json --person person_card.md
+```
+Only what you type moves the mood. Tested on synthetic data only; the Tagalog/Bisaya word lists are unchecked.
+
 ## GPU training (Stage 1; see docs/GPU_GUIDE.md)
 ```bash
 python -m persona_lm check-gpu                       # does the GPU code match the NumPy reference on this machine?
@@ -87,7 +99,7 @@ python -m persona_lm train ... --backend auto --device auto --precision auto --b
 A crash or power cut loses at most `--ckpt-every` steps (default 100) or `--ckpt-minutes` (default 10).
 
 ## Tests
-`python -m unittest discover -s tests -v`  (187 tests, a few seconds; 2 of them need PyTorch and are skipped without it). They check, among other things:
+`python -m unittest discover -s tests -v`  (262 tests, a few seconds; 2 of them need PyTorch and are skipped without it). They check, among other things:
 the gradients against finite differences (and that the check catches deliberately injected bugs), that loss falls,
 that stop-and-resume gives bit-identical weights, tokenizer round trips, and that the GGUF file reads back.
 
@@ -102,4 +114,4 @@ that stop-and-resume gives bit-identical weights, tokenizer round trips, and tha
   load `aria.gguf` with `llama-cli`, and compare `llama-tokenize` output against `Tokenizer.encode` on a sentence.
   If either differs, tell me the exact output and I will fix the writer. Q4_K_M: run llama.cpp's `llama-quantize` on the f16 file.
 - Text generation recomputes the window each token (no KV cache). Fine for testing; slow for long replies.
-- Not in this package yet: Person card, mood, identity core, self-modification, personas, export package. See `HANDOFF.md` for the plan and status.
+- Not in this package yet: identity core, self-modification, personas, export package. See `HANDOFF.md` for the plan and status.
