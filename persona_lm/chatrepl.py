@@ -20,6 +20,9 @@ Design rules (they matter for Stage 7, when the AI may PROPOSE changes):
   * /memory /remember /forget (Stage 4) work only when the chat was started with a memory file (--memory). Memories are added or removed only
     by these typed commands; the AI's own words never reach the memory file. Recalled memories are put into the prompt after the system
     line as one block  <|memory|> - fact - fact <|end|>  and cost part of the window.
+  * --archive FILE (old chats) keeps EVERY exchange of every chat in one file and, for each new message, puts the few old exchanges that match it
+    best into the same  <|memory|>  block (as "- earlier chat (3 months ago): you said ... / I said ..."). That is how the AI can "see" a chat from
+    200 chats ago although its window is only 512 tokens. /recall <words> shows what would be recalled. Only typed chat is archived.
   * The class does no keyboard reading itself (`handle(line)` takes a string), so tests never wait for a keyboard.
 """
 import os
@@ -34,6 +37,7 @@ from . import proposals as PRO
 from . import personas as PERS
 from .lineage import LineageProblem
 from .memory import MemoryConflict, MemoryProblem, parse_remember
+from .archive import ArchiveProblem, when_text
 
 
 HELP = """Commands (type them at the  you>  prompt):
@@ -44,6 +48,7 @@ HELP = """Commands (type them at the  you>  prompt):
   /remember <text>  (needs --memory) remember something, e.g.  /remember [[person:Maria]] is my sister #love *0.9 !pin
                     ([[Name]] or [[kind:Name]] makes a node; #emotion, *importance 0-1 and !pin go at the END)
   /forget <id>      (needs --memory) delete one memory for good, e.g. /forget m0003
+  /recall <words>   (needs --archive) which old chat exchanges the AI would be shown for those words (/recall alone: the archive size)
   /mood             (needs --mood) the AI's current feeling; /mood tag <text> shows how a text would be read; /mood reset goes back to the baseline
   /identity         (needs --core) the AI's identity card, its versions and recent history (read only)
   /proposals        (needs --core) changes the AI has proposed and that wait for you
@@ -63,7 +68,7 @@ class ChatSession:
     """One conversation. generate(prompt_ids, seed=..., max_new=..., temperature=..., top_k=...) -> list of new token ids."""
 
     def __init__(self, tok, ctx, generate, system=None, save_dir=".", settings=None, seed=0, clock=time.time, memory=None, memory_tokens=None,
-                 mood=None, tagger=None, person=None, person_tokens=None, identity=None, proposals=None, personas=None):
+                 mood=None, tagger=None, person=None, person_tokens=None, identity=None, proposals=None, personas=None, archive=None):
         self.tok, self.ctx, self.generate = tok, ctx, generate
         self.system = system
         self.save_dir = save_dir
@@ -90,6 +95,10 @@ class ChatSession:
         self.proposals = proposals              # a proposals.Proposals, or None (proposals switched off)
         self.personas = personas                # a personas.Personas, or None
         self._awaiting = None                   # ("approve", "p0001"): the next typed line must be that number
+        self.archive = archive                  # an archive.ChatArchive, or None (old chats are not stored or recalled)
+        self.session_id = time.strftime("s%Y%m%d-%H%M%S", time.localtime(clock()))
+        self._exchanges = []                    # [(index of the user message in self.history, archive id)] for THIS conversation
+        self.last_archive_recalled = []         # archive ids put into the newest prompt
 
     # ------------------------------------------------------------ what the model sees
     def _message_ids(self, role, text):
@@ -98,22 +107,47 @@ class ChatSession:
     def prompt_budget(self):
         return max(self.ctx - self.settings["max_new"], self.ctx // 2)
 
+    def _visible_archive_ids(self, room):
+        """Archive ids of this conversation's exchanges that are DEFINITELY still inside the window (so they need no recall)."""
+        kept = 0
+        for role, text in reversed(self.history):
+            cost = len(self._message_ids(role, text))
+            if cost > room:
+                break
+            room -= cost
+            kept += 1
+        first_visible = len(self.history) - kept
+        return [aid for idx, aid in self._exchanges if idx >= first_visible]
+
     def _memory_block(self, room):
-        """<|memory|> - fact - fact <|end|> for the memories that fit the newest user message, or [] (also sets self.last_recalled).
-        It never takes more than a third of the room left after the system line, so the conversation itself still fits."""
-        self.last_recalled, self.last_unfit = [], 0
-        if self.memory is None or not self.history:
+        """<|memory|> - fact - fact <|end|> for the memories (and old chat exchanges) that fit the newest user message, or []
+        (also sets self.last_recalled and self.last_archive_recalled). It never takes more than a third of the room left after
+        the system line, so the conversation itself still fits. With both a memory file and an archive, the archive gets up to half of it."""
+        self.last_recalled, self.last_unfit, self.last_archive_recalled = [], 0, []
+        if (self.memory is None and self.archive is None) or not self.history:
             return []
         cap = min(self.memory_tokens, room // 3) - 2                       # 2 = the <|memory|> and <|end|> markers
         query = " ".join(t for r, t in self.history[-3:] if r == "user")      # the last user message(s): what the person is talking about now
-        found = self.memory.retrieve(query, k=6, budget_tokens=max(cap, 0), count_tokens=lambda line: len(self.tok.encode(line + "\n", allow_special=False)),
-                                     now=self.clock()) if cap > 0 else []
-        if not found:
-            self.last_unfit = len(self.memory.retrieve(query, k=6, now=self.clock()))     # matches that exist but did not fit
+        count = lambda line: len(self.tok.encode(line + "\n", allow_special=False))
+        lines, used = [], 0
+        if self.archive is not None and cap > 0:
+            a_cap = cap if self.memory is None else cap // 2
+            skip = self._visible_archive_ids(max(room - cap, 0))
+            found_a = self.archive.recall(query, k=3, budget_tokens=a_cap, count_tokens=count, skip_ids=skip, now=self.clock())
+            self.last_archive_recalled = [it["id"] for it, _, _, _ in found_a]
+            lines += [line for _, _, _, line in found_a]
+            used = sum(count(l) for l in lines)
+        if self.memory is not None:
+            m_cap = cap - used
+            found = self.memory.retrieve(query, k=6, budget_tokens=max(m_cap, 0), count_tokens=count, now=self.clock()) if m_cap > 0 else []
+            if not found:
+                self.last_unfit = len(self.memory.retrieve(query, k=6, now=self.clock()))     # matches that exist but did not fit
+            else:
+                self.last_recalled = [m["id"] for m, _, _ in found]
+                lines = [self.memory.line_for_prompt(m) for m, _, _ in found] + lines
+        if not lines:
             return []
-        self.last_recalled = [m["id"] for m, _, _ in found]
-        text = "\n".join(self.memory.line_for_prompt(m) for m, _, _ in found)
-        return [MEMORY] + self.tok.encode(text, allow_special=False) + [END]
+        return [MEMORY] + self.tok.encode("\n".join(lines), allow_special=False) + [END]
 
     def _speaker_block(self, room):
         """<|speaker|> Name: ... <|end|> from the Person card; whole facts only; at most a quarter of the room left after the system line."""
@@ -209,6 +243,12 @@ class ChatSession:
             return "(the model produced an empty reply: just send your message again, or try /temp 1.0)"
         self.history.append(("assistant", reply))
         out = "ai> " + reply
+        if self.archive is not None:                                # every finished exchange is filed for later chats
+            try:
+                item = self.archive.append(self.session_id, text, reply, t=self.clock())
+                self._exchanges.append((len(self.history) - 2, item["id"]))
+            except ArchiveProblem as e:
+                out += "\n(could not save to the chat archive: %s)" % e
         if self.proposals is not None:                              # the AI's words may only FILE proposals (never decide them)
             try:
                 for prop, note in PRO.submit_from_reply(self.proposals, reply):
@@ -226,6 +266,8 @@ class ChatSession:
             out += "\n(note: %d memor%s matched but did not fit in the memory budget of %d tokens, so the AI did not see %s. " \
                    "A bigger window or --memory-tokens helps.)" % (self.last_unfit, "y" if self.last_unfit == 1 else "ies", self.memory_tokens,
                                                                    "it" if self.last_unfit == 1 else "them")
+        if self.last_archive_recalled:
+            out += "\n(old chats recalled: %s; /recall shows what matches)" % ", ".join("#%d" % i for i in self.last_archive_recalled)
         if self.last_recalled:
             out += "\n(recalled: %s; /memory shows them)" % ", ".join(self.last_recalled)
             self.memory.touch(self.last_recalled, now=self.clock())
@@ -242,6 +284,23 @@ class ChatSession:
             out += "\n(note: the AI's window is %d tokens, so it no longer sees the oldest %d message(s) of this conversation. /history still shows everything.)" % (self.ctx, info)
         return out
 
+    def _new_session(self):
+        """A cleared conversation is a new chat in the archive (the old one stays there)."""
+        self.session_id = time.strftime("s%Y%m%d-%H%M%S", time.localtime(self.clock()))
+        self._exchanges = []
+
+    def recall_command(self, arg):
+        if self.archive is None:
+            return "The chat archive is not switched on. Start the chat with:  python -m persona_lm chat ... --archive chat_archive.jsonl"
+        if not arg:
+            return self.archive.overview(self.clock()) + "\n(/recall <words> shows which old exchanges the AI would be shown for those words)"
+        now = self.clock()
+        found = self.archive.search(arg, k=6, now=now)
+        if not found:
+            return "No old chat matches those words."
+        return "\n".join("#%d (%s, chat %s, score %.2f: %s)\n    you: %s\n    ai:  %s" % (
+            it["id"], when_text(it["t"], now), it["session"] or "?", sc, ", ".join(words), it["user"][:200], it["ai"][:200]) for it, sc, words in found)
+
     def command(self, line):
         name, _, arg = line.partition(" ")
         name, arg = name.lower(), arg.strip()
@@ -251,6 +310,7 @@ class ChatSession:
             return HELP, False
         if name == "/reset":
             self.history, self.turn, self._told_about_window = [], 0, False
+            self._new_session()
             return "Conversation cleared.", False
         if name == "/history":
             if not self.history:
@@ -264,6 +324,7 @@ class ChatSession:
                 return "That system line is too long for the model's window. Nothing changed.", False
             self.system = arg
             self.history, self.turn, self._told_about_window = [], 0, False
+            self._new_session()
             return "System line set; conversation cleared.", False
         if name == "/temp":
             try:
@@ -283,6 +344,8 @@ class ChatSession:
                 return "Use a whole number from 1 to %d, e.g. /max 120 (now: %d)." % (self.ctx - 8, self.settings["max_new"]), False
             self.settings["max_new"] = v
             return "longest reply = %d tokens" % v, False
+        if name == "/recall":
+            return self.recall_command(arg), False
         if name == "/save":
             return self.save(arg), False
         if name in ("/memory", "/remember", "/forget"):

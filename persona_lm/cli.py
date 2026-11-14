@@ -18,6 +18,7 @@ from . import pipeline as PL
 from . import report as R
 from .chatrepl import ChatSession, run_repl
 from . import memory as MEM
+from . import archive as ARC
 from . import memory_export as MEX
 from . import emotion as EMO
 from . import person as PER
@@ -227,6 +228,12 @@ def cmd_chat(a):
             store = MEM.MemoryStore(a.memory)
         except MEM.MemoryProblem as e:
             raise SystemExit("error: %s" % e)
+    archive = None
+    if getattr(a, "archive", None):                     # also checked before the slow model load
+        try:
+            archive = ARC.ChatArchive(a.archive)
+        except ARC.ArchiveProblem as e:
+            raise SystemExit("error: %s" % e)
     mood = tagger = card = None
     try:                                                # Stage 5 files are checked BEFORE the model loads, too
         if getattr(a, "mood", None):
@@ -250,7 +257,7 @@ def cmd_chat(a):
     session = ChatSession(tok, cfg.ctx, lambda ids, **kw: sample_ids_cached(params, cfg, ids, **kw), system=system, save_dir=a.save_dir,
                           settings={"max_new": a.max_new, "temperature": a.temperature, "top_k": a.top_k},
                           memory=store, memory_tokens=a.memory_tokens, mood=mood, tagger=tagger, person=card,
-                          person_tokens=getattr(a, "person_tokens", None), identity=core, personas=personas,
+                          person_tokens=getattr(a, "person_tokens", None), identity=core, personas=personas, archive=archive,
                           proposals=PRO.Proposals(core, memory_path=getattr(a, "memory", None), person_path=getattr(a, "person", None)) if core is not None else None)
     if core is not None:
         name = getattr(a, "_version_name", None)
@@ -269,6 +276,8 @@ def cmd_chat(a):
             print("self.md was edited by hand; the official identity text is in force. Use `identity adopt` to make the edit official.")
     if store is not None:
         print("Memory file: %s (%s)" % (a.memory, store.overview().splitlines()[0]))
+    if archive is not None:
+        print(archive.overview())
     if mood is not None:
         print("Mood file: %s (%s)" % (a.mood, mood.describe().split(" (")[0]))
     if card is not None:
@@ -967,6 +976,7 @@ def build_parser():
             s.add_argument("--save-dir", default=".", help="where /save writes conversations (this computer only)")
             s.add_argument("--memory", default=None, help="memory file (Stage 4): turns on /memory /remember /forget and recall into the prompt")
             s.add_argument("--memory-tokens", type=int, default=None, help="most tokens of the window that recalled memories may use (default: a fifth of the window)")
+            s.add_argument("--archive", default=None, help="chat archive file, e.g. chat_archive.jsonl: every exchange is kept and the old ones that match your message are shown to the AI (even from 200 chats ago); /recall works")
             s.add_argument("--mood", default=None, help="mood file (Stage 5): turns on /mood, a mood block in the prompt and a small temperature effect (created on first save)")
             s.add_argument("--emotion-model", default=None, help="a model made by `emotion train` (needs --mood); without it only the word list reads your feelings")
             s.add_argument("--lexicon", default=None, help="JSON of extra feeling words, e.g. {\"anger\": [\"inis\"]} (needs --mood)")

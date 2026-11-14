@@ -115,6 +115,16 @@ python -m persona_lm train ... --backend auto --device auto --precision auto --b
 `--backend auto` uses PyTorch if installed (GPU if present, else CPU) and falls back to NumPy. `--precision auto` picks bf16 on NVIDIA Ampere or newer, fp16 on older GPUs, fp32 on CPU.
 `--batch` is the micro-batch that must fit in memory; `--batch x --accum` is the effective batch. Both backends read and write the same `ckpt.npz`.
 
+## Old chats, merging cleaner, s30m (2026-11-15; see HANDOFF.md "Newest state 4")
+
+    python clean_chat.py                      # cleans data_msgr and MERGES it into data_msgr_clean (never overwrites; --dry-run to preview)
+    python setup_s30m.py                      # makes work2 for the s30m model from work (tokenizer + public tokens copied, chat data = data_msgr_clean)
+    python -m persona_lm chat --ckpt work\run_chat\ckpt.npz --tokenizer work\tok.json --archive chat_archive.jsonl --memory-tokens 160
+
+`--archive FILE` keeps every exchange of every chat and shows the AI the few OLD exchanges that match your newest message (even from 200 chats ago),
+inside the same `<|memory|>` block. `/recall words` shows what would be recalled. Limits: word-overlap search only, and the model was not yet
+fine-tuned on memory blocks, so how well it uses them is untested.
+
 ## Data formats
 - Pretraining: `.txt`, `.md` (any folder of them), `.jsonl`/`.json` with strings or `{"text": "..."}`.
 - Chat: `{"messages": [{"role": "system|user|assistant", "content": "..."}]}`, or `{"prompt": ..., "reply": ...}`,

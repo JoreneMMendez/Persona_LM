@@ -46,3 +46,10 @@ kaggle_upload/
 kaggle_upload/
 
 kaggle_upload/
+
+# chat data of any kind never goes to GitHub (2026-11-15: *.bak copies of real chats were found in the repo)
+*.bak
+*.prev
+data_msgr/
+data_msgr_chats/
+data_msgr_archive/
