@@ -24,7 +24,8 @@ SPECIALS = _CORE_SPECIALS + _PLANNED_SPECIALS + ["<|reserved_%02d|>" % i for i i
 EOS, SYSTEM, USER, ASSISTANT, END = range(5)
 MEMORY, PERSONA, MOOD, SPEAKER, SUMMARY = range(5, 10)
 ROLE_ID = {"system": SYSTEM, "user": USER, "assistant": ASSISTANT,
-           "persona": PERSONA}       # Stage 8b: a persona block in chat data/prompt is just another message  <|persona|> text <|end|>  (never trained on by default)
+           "persona": PERSONA,
+           "mood": MOOD}             # mood block in chat data: {"role": "mood", "content": "amusement +0.6 +0.5"} -> <|mood|> amusement +0.6 +0.5 <|end|> (same ids chat builds). Stage 8b persona:: a persona block in chat data/prompt is just another message  <|persona|> text <|end|>  (never trained on by default)
 
 
 def _special_re(specials):

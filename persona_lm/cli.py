@@ -26,6 +26,7 @@ from . import lineage as LIN
 from . import proposals as PRO
 from . import personas as PERS
 from .generate import complete, sample_ids
+from .fastgen import sample_ids_cached
 from .gguf import export_model, params_from_gguf, read_gguf
 from .model import PRESETS, Config, forward, init_params, loss_and_grads, preset, zero_grads
 from .train import DEFAULT_HP, train
@@ -246,7 +247,7 @@ def cmd_chat(a):
     if core and system is None:
         count = lambda text: len(tok.encode(text, allow_special=False))
         system, left_out = ID.system_line(core.sections, count, max(((cfg.ctx - a.max_new) // 2) - 4, 8))
-    session = ChatSession(tok, cfg.ctx, lambda ids, **kw: sample_ids(params, cfg, ids, **kw), system=system, save_dir=a.save_dir,
+    session = ChatSession(tok, cfg.ctx, lambda ids, **kw: sample_ids_cached(params, cfg, ids, **kw), system=system, save_dir=a.save_dir,
                           settings={"max_new": a.max_new, "temperature": a.temperature, "top_k": a.top_k},
                           memory=store, memory_tokens=a.memory_tokens, mood=mood, tagger=tagger, person=card,
                           person_tokens=getattr(a, "person_tokens", None), identity=core, personas=personas,
