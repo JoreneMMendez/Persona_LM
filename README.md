@@ -88,6 +88,15 @@ Only what you type moves the mood. Tested on synthetic data only; the Tagalog/Bi
 
 `python -m persona_lm persona --dir identity_core ...` (`add`, `list`, `show`, `edit`, `remove`, `use`). A persona is prompt text only: it never changes who the AI is (the identity core is untouched and the AI is told it is still itself underneath). Only you can switch one, by typing; every change goes into the lineage history without the text. In the chat (started with `--core`): `/persona`, `/persona NAME`, `/persona none`. Stage 8b adds the optional trained side: `persona example`, `make-data` (training lines carrying the same persona block the chat uses), `attach`/`detach` (a fine-tuned version for a mask; a full copy of the weights, not an adapter) and `persona check` (do the facts about who the AI is survive the mask?).
 
+## Use it from Python (Stage 9a; see docs/RUNTIME_GUIDE.md)
+
+```python
+import persona_lm.runtime as rt
+ai = rt.load("identity_core")      # no PyTorch needed
+print(ai.chat("hello"))            # also: ai.memory, ai.mood, ai.switch_persona("none")
+```
+Replies are generated with a KV cache (`persona_lm/fastgen.py`), much faster than re-reading the whole window for every word. Text passed to `chat()` is never a command, and the AI's words can never approve a change or switch a persona.
+
 ## GPU training (Stage 1; see docs/GPU_GUIDE.md)
 ```bash
 python -m persona_lm check-gpu                       # does the GPU code match the NumPy reference on this machine?
