@@ -178,13 +178,13 @@ class ChatTests(Base):
         self.assertEqual(ids.count(END), 1)                                  # only the real terminator
         self.assertEqual(ids.count(ASSISTANT), 1)                            # only the final marker
 
-    def test_unbuilt_commands_are_honest_stubs_that_change_nothing(self):
+    def test_proposal_commands_without_a_proposal_store_explain_and_change_nothing(self):
         s = self.session()
         s.handle("hello")
         before = list(s.history)
-        for cmd, stage in (("/approve", 7), ("/reject", 7)):          # /mood became real in Stage 5, /identity in Stage 6 (tests/test_stage6.py)
+        for cmd in ("/approve", "/reject", "/proposals"):             # /mood became real in Stage 5, /identity in Stage 6, proposals in Stage 7b (tests/test_stage7b.py)
             text, quit_ = s.handle(cmd)
-            self.assertIn("Stage %d" % stage, text)
+            self.assertIn("No proposal store", text)
             self.assertIn("Nothing was changed", text)
             self.assertFalse(quit_)
         self.assertEqual(s.history, before)
@@ -197,7 +197,7 @@ class ChatTests(Base):
         self.assertEqual(text, "ai> /quit")
         s2 = self.session(text="/approve")
         text, _ = s2.handle("hi")
-        self.assertNotIn("Stage 7", text)
+        self.assertNotIn("No proposal store", text)
 
     def test_unknown_command_and_double_slash_escape(self):
         s = self.session()

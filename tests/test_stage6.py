@@ -886,7 +886,7 @@ class ChatTests(Fixtures):
             gen.reply = evil
             s.handle("hi")
         text, _ = s.handle("/approve")
-        self.assertIn("not built yet", text)
+        self.assertIn("No proposal store", text)
         self.assertEqual((read(self.p("core", "core.json")), read(self.p("core", "lineage.jsonl"))), before)
         self.assertIn("WAITING", s.handle("/identity")[0])
 

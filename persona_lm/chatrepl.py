@@ -3,7 +3,11 @@
 Design rules (they matter for Stage 7, when the AI may PROPOSE changes):
   * Commands are read ONLY from what the person types. The model's replies are never looked at for commands, so nothing the AI
     writes (or anything in its training data) can run /approve, /reject or any other command.
-  * /approve /reject exist already but are honest stubs: they say which stage builds them and change nothing.
+  * /proposals /approve /reject (Stage 7b) work when the chat was started with --core DIR. The AI may FILE a proposal by writing a line like
+        [propose memory-add] Maria loves mango #joy *0.8 | why: you said it twice
+    in its reply (at most 3 per reply, duplicates skipped, anything invalid ignored). That is all its words can do: they never approve, reject, undo or
+    run a command. /approve ID shows the exact change and then needs you to TYPE the number again; it works only when the chat is run in a terminal
+    window (not from a pipe or a script). Undo is `python -m persona_lm proposal undo ID`.
   * /identity (Stage 6) shows the identity core when the chat was started with --core DIR. It only READS: protected changes can be made only
     with the `identity` commands, typed in a terminal, never from inside the chat and never from anything the AI writes.
   * /mood (Stage 5) works when the chat was started with --mood FILE. Only what the person TYPES moves the mood (each message is tagged by the
@@ -16,18 +20,16 @@ Design rules (they matter for Stage 7, when the AI may PROPOSE changes):
   * The class does no keyboard reading itself (`handle(line)` takes a string), so tests never wait for a keyboard.
 """
 import os
+import sys
 import time
 
 from .bpe import ASSISTANT, END, MEMORY, MOOD, ROLE_ID, SPEAKER
 from . import emotion as EMO
 from . import person as PER
+from . import identity as ID
+from . import proposals as PRO
 from .memory import MemoryConflict, MemoryProblem, parse_remember
 
-# command -> (stage that builds it, what it will do)
-PLANNED = {
-    "/approve":  (7, "approve a change the AI has PROPOSED to its memory, settings or training"),
-    "/reject":   (7, "reject a change the AI has proposed"),
-}
 
 HELP = """Commands (type them at the  you>  prompt):
   /help             this list
@@ -39,20 +41,23 @@ HELP = """Commands (type them at the  you>  prompt):
   /forget <id>      (needs --memory) delete one memory for good, e.g. /forget m0003
   /mood             (needs --mood) the AI's current feeling; /mood tag <text> shows how a text would be read; /mood reset goes back to the baseline
   /identity         (needs --core) the AI's identity card, its versions and recent history (read only)
+  /proposals        (needs --core) changes the AI has proposed and that wait for you
+  /approve <id>     (needs --core) look at a proposed change, then type its number to apply it (undo: the `proposal undo` command)
+  /reject <id>      (needs --core) throw a proposed change away
   /save [file]      write the conversation to a text file on this computer (never overwrites)
   /system <text>    set the system line (how the AI is introduced to itself) and start again
   /temp <0-2>       randomness of the replies (0 = always the most likely word, 0.8 = default)
   /max <n>          longest reply in tokens
   /quit             leave
   //text            send a message that starts with a slash, e.g. //shrug
-Not built yet (they only explain what they will do): /approve /reject"""
+The AI may propose changes by writing a line  [propose KIND] ... | why: ...  in its reply; it can never approve them."""
 
 
 class ChatSession:
     """One conversation. generate(prompt_ids, seed=..., max_new=..., temperature=..., top_k=...) -> list of new token ids."""
 
     def __init__(self, tok, ctx, generate, system=None, save_dir=".", settings=None, seed=0, clock=time.time, memory=None, memory_tokens=None,
-                 mood=None, tagger=None, person=None, person_tokens=None, identity=None):
+                 mood=None, tagger=None, person=None, person_tokens=None, identity=None, proposals=None):
         self.tok, self.ctx, self.generate = tok, ctx, generate
         self.system = system
         self.save_dir = save_dir
@@ -76,6 +81,8 @@ class ChatSession:
         self.last_person_left = 0                # card facts that did not fit the budget
         self._told_about_card = False
         self.identity = identity                # an identity.Core, or None (no identity core in this chat)
+        self.proposals = proposals              # a proposals.Proposals, or None (proposals switched off)
+        self._awaiting = None                   # ("approve", "p0001"): the next typed line must be that number
 
     # ------------------------------------------------------------ what the model sees
     def _message_ids(self, role, text):
@@ -149,6 +156,8 @@ class ChatSession:
     def handle(self, line):
         """Returns (text_to_show or None, quit?)."""
         line = line.strip()
+        if self._awaiting:                                          # a typed confirmation is pending: this line answers it, nothing else does
+            return self.confirm(line), False
         if not line:
             return None, False
         if line.startswith("//"):
@@ -183,6 +192,13 @@ class ChatSession:
             return "(the model produced an empty reply: just send your message again, or try /temp 1.0)"
         self.history.append(("assistant", reply))
         out = "ai> " + reply
+        if self.proposals is not None:                              # the AI's words may only FILE proposals (never decide them)
+            try:
+                for prop, note in PRO.submit_from_reply(self.proposals, reply):
+                    out += "\n" + (note or "(the AI proposed %s: %s. Nothing has changed. /approve %s to look at it, /reject %s to drop it)" % (
+                        prop["id"], prop["kind"], prop["id"], prop["id"]))
+            except OSError as e:
+                out += "\n(could not save a proposal: %s)" % e
         if self.mood is not None:
             out += "\n(feeling now: %s; /mood shows more)" % self.mood.label
             try:
@@ -260,13 +276,52 @@ class ChatSession:
             if self.identity is None:
                 return "No identity core in this chat. Start it with:  python -m persona_lm chat --core identity_core ...   (make one with: identity init)", False
             return self.identity.describe(), False
-        if name in PLANNED:
-            stage, what = PLANNED[name]
-            msg = "%s is not built yet. It is planned for Stage %d: it will %s. Nothing was changed." % (name, stage, what)
-            if name in ("/approve", "/reject"):
-                msg += " (When it exists, approvals will be read only from your keyboard, never from anything the AI writes.)"
-            return msg, False
+        if name in ("/proposals", "/approve", "/reject"):
+            return self.proposal_command(name, arg), False
         return "Unknown command %s. Type /help. (To send a message that starts with a slash, start it with two slashes.)" % name, False
+
+    def proposal_command(self, name, arg):
+        if self.proposals is None:
+            return "No proposal store in this chat. Start it with:  python -m persona_lm chat --core identity_core ...   Nothing was changed."
+        pr = self.proposals
+        try:
+            if name == "/proposals":
+                rows = pr.listing("pending")
+                return "\n".join("%s  %-18s %s" % (p["id"], p["kind"], p["why"][:70]) for p in rows) if rows else "No proposals are waiting."
+            if not arg:
+                return "Say which one, e.g. %s p0001  (/proposals lists them)." % name
+            p = pr.get(arg.split()[0])
+            if name == "/reject":
+                if ID.REQUIRE_TTY and not (sys.stdin and sys.stdin.isatty()):
+                    return "Decisions are accepted only when you type in a terminal window (not from a pipe or a script). Nothing was changed."
+                return pr.reject(p["id"])
+            if ID.REQUIRE_TTY and not (sys.stdin and sys.stdin.isatty()):
+                return "Approvals are accepted only when you type in a terminal window (not from a pipe or a script). Nothing was changed."
+            if p["status"] != "pending":
+                return "%s is %s, not waiting." % (p["id"], p["status"])
+            self._awaiting = ("approve", p["id"])
+            return pr.describe(p) + "\nType  %s  to apply this change (anything else cancels; nothing has changed yet):" % p["id"]
+        except (PRO.ProposalProblem, ID.IdentityProblem, MemoryProblem, PER.PersonProblem, OSError) as e:
+            return "%s Nothing was changed." % e
+
+    def confirm(self, line):
+        kind, pid = self._awaiting
+        self._awaiting = None
+        if line.strip().lower() != pid:
+            return "Not confirmed. Nothing was changed."
+        lines = []
+        try:
+            msg = self.proposals.approve(pid, ask=lambda prompt: line, out=lines.append)
+        except (PRO.ProposalProblem, ID.IdentityProblem, MemoryProblem, PER.PersonProblem, OSError) as e:
+            return "%s Nothing was changed." % e
+        if self.memory is not None and self.proposals.memory_path and os.path.abspath(self.memory.path or "") == os.path.abspath(self.proposals.memory_path):
+            self.memory.reload()                                    # an approved memory change was made by another store object: read it back
+        if self.person is not None and self.proposals.person_path:
+            try:
+                self.person = PER.load(self.proposals.person_path)
+            except PER.PersonProblem:
+                pass
+        return msg
 
     def mood_command(self, arg):
         if self.mood is None:

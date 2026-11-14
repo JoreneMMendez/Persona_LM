@@ -208,7 +208,8 @@ def cmd_chat(a):
     session = ChatSession(tok, cfg.ctx, lambda ids, **kw: sample_ids(params, cfg, ids, **kw), system=system, save_dir=a.save_dir,
                           settings={"max_new": a.max_new, "temperature": a.temperature, "top_k": a.top_k},
                           memory=store, memory_tokens=a.memory_tokens, mood=mood, tagger=tagger, person=card,
-                          person_tokens=getattr(a, "person_tokens", None), identity=core)
+                          person_tokens=getattr(a, "person_tokens", None), identity=core,
+                          proposals=PRO.Proposals(core, memory_path=getattr(a, "memory", None), person_path=getattr(a, "person", None)) if core is not None else None)
     if core is not None:
         name = getattr(a, "_version_name", None)
         print("Identity core: %s (%s). Version: %s%s." % (core.sections["Name"], core.dir, name or "(a checkpoint typed by hand)",
@@ -488,8 +489,12 @@ def _proposal_action(a):
     """python -m persona_lm proposal [--dir identity_core] <action> (Stage 7a). Filing a proposal changes nothing; approve/undo need typing at the keyboard."""
     pr = PRO.Proposals(ID.Core(a.dir), memory_path=a.memory, person_path=a.person)
     act = a.action
-    if act in ("memory-add", "memory-forget", "memory-importance", "card-add"):
-        if act == "memory-add":
+    if act in ("memory-add", "memory-forget", "memory-importance", "card-add", "config", "finetune"):
+        if act == "config":
+            args = {"key": a.key, "value": a.value}
+        elif act == "finetune":
+            args = {"run": a.run, "data_dir": a.data_dir, "size": a.size, "steps": a.steps, "lr": a.lr, "init_from": a.init_from}
+        elif act == "memory-add":
             args = {"text": " ".join(a.text), "emotion": a.emotion, "importance": a.importance, "pinned": a.pinned, "nodes": a.node or []}
         elif act == "memory-forget":
             args = {"id": a.id}
@@ -983,6 +988,11 @@ def build_parser():
     q = pa.add_parser("memory-importance", help="propose a new importance (0-1) for one memory"); q.add_argument("id"); q.add_argument("importance", type=float)
     q.add_argument("--why", required=True); q.add_argument("--pinned", action=argparse.BooleanOptionalAction, default=None)
     q = pa.add_parser("card-add", help="propose a line for the Person card"); q.add_argument("section"); q.add_argument("text", nargs="+"); q.add_argument("--why", required=True)
+    q = pa.add_parser("config", help="propose a new value for an identity setting (only warn_drift; the safeguards are yours alone)"); q.add_argument("key"); q.add_argument("value", type=float)
+    q.add_argument("--why", required=True)
+    q = pa.add_parser("finetune", help="propose a training run (approving only RECORDS the command; you run it yourself)"); q.add_argument("--run", required=True); q.add_argument("--data-dir", required=True)
+    q.add_argument("--size", required=True); q.add_argument("--steps", type=int, required=True); q.add_argument("--lr", type=float, required=True); q.add_argument("--init-from", default=None)
+    q.add_argument("--why", required=True)
     q = pa.add_parser("list", help="waiting proposals (--all for every one)"); q.add_argument("--all", action="store_true")
     q = pa.add_parser("show", help="what / why / diff / how to undo"); q.add_argument("id")
     q = pa.add_parser("approve", help="apply a proposal (you type its number to confirm; keyboard only)"); q.add_argument("id")

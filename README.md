@@ -79,9 +79,9 @@ python -m persona_lm chat --ckpt runs/chat/ckpt.npz --tokenizer tok.json --mood 
 ```
 Only what you type moves the mood. Tested on synthetic data only; the Tagalog/Bisaya word lists are unchecked.
 
-## Proposals: the AI may only suggest changes (Stage 7a; see docs/PROPOSAL_GUIDE.md)
+## Proposals: the AI may only suggest changes (Stages 7a + 7b; see docs/PROPOSAL_GUIDE.md)
 
-`python -m persona_lm proposal --dir identity_core ...` (`memory-add`, `memory-forget`, `memory-importance`, `card-add`, `list`, `show`, `approve`, `reject`, `undo`). Filing a proposal changes nothing; `approve` and `undo` need you to type the proposal number at a terminal. Every decision goes into the lineage history without the memory text. The identity core cannot be changed this way. Config/fine-tune proposals and chat `/approve` come in 7b.
+`python -m persona_lm proposal --dir identity_core ...` (`memory-add`, `memory-forget`, `memory-importance`, `card-add`, `list`, `show`, `approve`, `reject`, `undo`). Filing a proposal changes nothing; `approve` and `undo` need you to type the proposal number at a terminal. Every decision goes into the lineage history without the memory text. The identity core cannot be changed this way. Stage 7b adds `config` (only `warn_drift`) and `finetune` (records the command, never runs it), lets the AI file proposals from its chat reply, and adds `/proposals /approve /reject` to the chat (typed confirmation, terminal only; start the chat with `--core`).
 
 ## GPU training (Stage 1; see docs/GPU_GUIDE.md)
 ```bash

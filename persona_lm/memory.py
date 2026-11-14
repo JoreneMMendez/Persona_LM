@@ -130,6 +130,11 @@ class MemoryStore:
         self.data = data
         self._sig = self._signature()
 
+    def reload(self):
+        """Read the file again (used after another part of the program, e.g. an approved proposal, changed it)."""
+        if self.path and os.path.exists(self.path):
+            self._load()
+
     def _backup_path(self):
         return self.path[:-5] + ".prev.json" if self.path.endswith(".json") else self.path + ".prev"
 
