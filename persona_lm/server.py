@@ -68,6 +68,14 @@ def make_server(ai, host="127.0.0.1", port=8765, token=None, allow_persona_switc
                 self._send(411, {"error": "Content-Length is required."})
                 return None
             if n < 0 or n > MAX_BODY:
+                # Read and throw away a moderately oversized body before answering. If we answer first and
+                # close with unread data, Windows resets the connection and the client never sees the 413.
+                left = n if 0 < n <= 16 * MAX_BODY else 0
+                while left > 0:
+                    chunk = self.rfile.read(min(left, 65536))
+                    if not chunk:
+                        break
+                    left -= len(chunk)
                 self._send(413, {"error": "The request is too big (at most %d bytes)." % MAX_BODY})
                 return None
             try:
