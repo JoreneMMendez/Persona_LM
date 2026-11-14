@@ -169,12 +169,15 @@ def cmd_generate(a):
 
 
 def cmd_chat(a):
-    core = None
+    core = personas = None
     if getattr(a, "core", None):                        # Stage 6: the identity core fills in what was not typed; checked BEFORE the (slow) model load
         try:
             core = ID.Core(a.core)
+            personas = PERS.Personas(core)                  # Stage 8a/8b: checked BEFORE the (slow) model load
+            if personas.active and not a.version and not a.ckpt:
+                a.version = personas.version_for(personas.active)       # a version fine-tuned for the mask in use (None = the current version)
             _fill_from_core(a, core)
-        except (ID.IdentityProblem, LIN.LineageProblem, OSError) as e:
+        except (ID.IdentityProblem, LIN.LineageProblem, PERS.PersonaProblem, OSError) as e:
             raise SystemExit("error: %s" % e)
     elif getattr(a, "version", None):
         raise SystemExit("error: --version only works together with --core DIR")
@@ -185,12 +188,6 @@ def cmd_chat(a):
         try:
             store = MEM.MemoryStore(a.memory)
         except MEM.MemoryProblem as e:
-            raise SystemExit("error: %s" % e)
-    personas = None
-    if core is not None:                                # Stage 8a: the persona file is checked BEFORE the model loads, too
-        try:
-            personas = PERS.Personas(core)
-        except PERS.PersonaProblem as e:
             raise SystemExit("error: %s" % e)
     mood = tagger = card = None
     try:                                                # Stage 5 files are checked BEFORE the model loads, too
@@ -224,7 +221,10 @@ def cmd_chat(a):
         if left_out:
             print("Note: the AI's window is small, so these identity sections were left out of its prompt: %s." % ", ".join(left_out))
         if personas is not None and personas.active:
-            print("Persona (a mask, prompt text only): %s. Underneath, still %s. /persona none takes it off." % (personas.active, core.sections["Name"]))
+            print("Persona (a mask): %s. Underneath, still %s. /persona none takes it off." % (personas.active, core.sections["Name"]))
+            if personas.d["personas"][personas.active].get("version"):
+                print("Using the version fine-tuned for this mask. Note: /persona NAME switches only the prompt text, not the weights; restart the chat to change the version.%s" % (
+                    " WARNING: the mask text changed after that version was trained." if personas.stale(personas.active) else ""))
         if core.pending():
             print("A protected identity change is waiting (identity pending). It does not affect this chat until applied.")
         if core.hand_edits():
@@ -557,6 +557,30 @@ def _persona_action(a):
         print(ps.remove(a.name))
     elif act == "use":
         print(ps.use(a.name))
+    elif act == "example":
+        print(ps.add_example(a.name, a.user, a.reply))
+    elif act == "make-data":
+        tok_path = a.tokenizer or ps.core.resolve("tokenizer")
+        if not tok_path:
+            raise PERS.PersonaProblem("No tokenizer: give --tokenizer tok.json (or register one: identity set-file tokenizer tok.json).")
+        n = ps.make_data(a.name, a.out, Tokenizer.load(tok_path), a.ctx)
+        print("Wrote %d example(s) to %s. Each has the identity line, the persona block and the message with NO loss, and your reply WITH loss." % (n, a.out))
+        print("Next (your own steps): prepare --kind chat on this file, train with --init-from your current checkpoint into a NEW run folder, then:\n"
+              "  identity add-version NAME --ckpt <new ckpt>   ->   identity record / score NAME   ->   persona attach \"%s\" NAME   ->   persona check \"%s\"" % (a.name, a.name))
+        print("This makes a full fine-tuned COPY of the weights (not a small adapter: LoRA is not built). It is optional; the mask also works as prompt text alone.")
+    elif act == "attach":
+        print(ps.attach(a.name, a.version))
+    elif act == "detach":
+        print(ps.detach(a.name))
+    elif act == "check":
+        name, _ = ps.get(a.name)
+        version = a.version or ps.version_for(name) or ps.core.current
+        if not version:
+            raise PERS.PersonaProblem("There is no version to test. Register and promote one first (identity add-version / record / promote).")
+        generate, tok, ctx = ID.load_runner(ps.core, version)
+        print("Asking version %s the probes with the mask %r on (greedy, no randomness):" % (version, name))
+        res = PERS.check_mask(ps.core, ps, name, generate, tok, ctx, version=version, against=a.against, out=print)
+        print(PERS.describe_check(name, res))
 
 
 def cmd_identity(a):
@@ -1046,6 +1070,13 @@ def build_parser():
     q = pe.add_parser("edit", help="change a mask's text"); q.add_argument("name"); q.add_argument("text", nargs="+")
     q = pe.add_parser("remove", help="delete a mask"); q.add_argument("name")
     q = pe.add_parser("use", help="put a mask on (or 'none' to take it off)"); q.add_argument("name")
+    q = pe.add_parser("example", help="Stage 8b: add one of YOUR example exchanges for a mask: persona example NAME \"what they say\" \"how this mask answers\""); q.add_argument("name"); q.add_argument("user"); q.add_argument("reply")
+    q = pe.add_parser("make-data", help="Stage 8b: write the mask's examples as chat training data (never overwrites)"); q.add_argument("name"); q.add_argument("--out", required=True)
+    q.add_argument("--tokenizer", default=None, help="default: the one registered in the identity core"); q.add_argument("--ctx", type=int, default=512)
+    q = pe.add_parser("attach", help="Stage 8b: say that a registered version was fine-tuned for this mask (the chat uses it while the mask is on)"); q.add_argument("name"); q.add_argument("version")
+    q = pe.add_parser("detach", help="Stage 8b: forget the attached version"); q.add_argument("name")
+    q = pe.add_parser("check", help="Stage 8b: identity regression test WITH the mask on (do the facts about who it is survive?)"); q.add_argument("name")
+    q.add_argument("--version", default=None, help="which version wears it (default: the attached one, else the current one)"); q.add_argument("--against", default=None, help="baseline version (default: the current one)")
     s.set_defaults(fn=cmd_persona)
 
     s = sub.add_parser("identity", help="Stage 6: the identity core (who the AI is, outside the weights), version history, regression probes")

@@ -5,7 +5,7 @@ It is a **mask**: it changes how the AI is *asked* to speak, never *who it is*.
 
 ## What a persona is, and what it is not (read this once)
 
-- A persona is **only prompt text**. Nothing is trained into the model's weights (that comes in Stage 8b, as an optional extra).
+- A persona is **prompt text**. On its own nothing is trained into the model's weights. Stage 8b adds an **optional** trained side (see the end of this guide).
 - Your tiny practice models have never seen a persona block, so they will mostly ignore it. A real model fine-tuned with persona blocks will follow it better
   (the real fine-tune data must contain `<|persona|>` blocks, like the memory and mood blocks).
 - The persona **never edits the identity core**. The AI's name, personality, temperament and values stay exactly as they are, and the identity line is still
@@ -75,3 +75,51 @@ Start the chat with `--core identity_core` (as before). Then:
   Shorten it with `persona edit`, or `/persona none`.
 - The persona file is plain text on your computer. Anyone who can edit your files can edit it; a file that is broken or contains forbidden text is refused when
   the chat starts, before the model loads.
+
+## Optional: train a model to wear the mask (Stage 8b)
+
+Prompt text alone is weak on a small model. To make a mask stick you can fine-tune on **your own example replies**. Be clear about what this is:
+
+- It makes a **full fine-tuned copy of the weights** for that mask. It is **not** a small adapter (LoRA is not built).
+- It is optional and untested on real data. The mask still works as prompt text without it.
+- Nothing is trained automatically. The commands below only prepare files and record what you did; you run the training yourself.
+
+1. Write examples (what someone says, and how this mask would answer). A few dozen is a start; at most 200 per mask:
+
+```
+python -m persona_lm persona example "calm mentor" "I failed my test" "That hurts. What will you try next?"
+```
+
+2. Make the training file. It never overwrites. Each line holds the identity line, the persona block and the message with no learning on them, and your reply with learning on it. The persona block is token-for-token what the chat will show the model:
+
+```
+python -m persona_lm persona make-data "calm mentor" --out data\mentor.jsonl
+```
+
+3. Train it with your usual steps: `prepare --kind chat` on that file, then `train` with `--init-from` your current checkpoint into a **new** run folder. Then register and score the new version like any other:
+
+```
+python -m persona_lm identity add-version mentor1 --ckpt runs\mentor1\ckpt.npz
+```
+
+4. Tell the persona which version was trained for it. While that mask is on, `chat --core` uses that version (unless you name one with `--version`). Starting a chat with the mask on says so:
+
+```
+python -m persona_lm persona attach "calm mentor" mentor1
+```
+
+   If you edit the mask text afterwards, the list shows **STALE** (the version learned the old text). `persona detach NAME` removes the link. A version that the regression test **rejected** is refused.
+
+## Does the mask hide who the AI is? `persona check`
+
+```
+python -m persona_lm persona check "calm mentor"
+```
+
+It asks the identity probes (name, owner, values, memories) with the mask **on** and compares with the answers recorded **without** a mask for your current version (`identity record` first). It judges only **whether the facts about who the AI is are still stated** (against your threshold). Overall wording and tone will differ; that is what a mask is for, so they are shown but not judged. It changes no identity file, promotes nothing and adds one history line with numbers only.
+
+- If it says the model "gave no answer to any probe", the mask text does not fit in the model's window next to the identity line. The tiny practice models have a 64-token window, so **no mask fits there**; this is normal for them. Real `s10m` models have 512.
+- A mask is refused (not silently shortened) when it takes more than a third of the room left after the identity line.
+- This compares words, not minds. Read a few answers yourself.
+
+Not built: a persona proposed by the AI (only you create personas), and adapters (LoRA).

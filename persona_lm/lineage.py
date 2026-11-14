@@ -18,7 +18,7 @@ GENESIS = "0" * 64
 KINDS = ("genesis", "identity-edit", "identity-staged", "identity-applied", "identity-cancelled", "version-added", "scored", "promote", "rollback",
          "settings", "distill", "note",
          "proposal-approved", "proposal-rejected", "proposal-undone",
-         "persona-added", "persona-edited", "persona-removed", "persona-switched")
+         "persona-added", "persona-edited", "persona-removed", "persona-switched", "persona-data", "persona-checked")
 
 
 class LineageProblem(Exception):

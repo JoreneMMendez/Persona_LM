@@ -86,7 +86,7 @@ Only what you type moves the mood. Tested on synthetic data only; the Tagalog/Bi
 
 ## Personas: masks the AI can wear (Stage 8a; see docs/PERSONA_GUIDE.md)
 
-`python -m persona_lm persona --dir identity_core ...` (`add`, `list`, `show`, `edit`, `remove`, `use`). A persona is prompt text only: it never changes who the AI is (the identity core is untouched and the AI is told it is still itself underneath). Only you can switch one, by typing; every change goes into the lineage history without the text. In the chat (started with `--core`): `/persona`, `/persona NAME`, `/persona none`. Trained persona adapters are not built yet (Stage 8b).
+`python -m persona_lm persona --dir identity_core ...` (`add`, `list`, `show`, `edit`, `remove`, `use`). A persona is prompt text only: it never changes who the AI is (the identity core is untouched and the AI is told it is still itself underneath). Only you can switch one, by typing; every change goes into the lineage history without the text. In the chat (started with `--core`): `/persona`, `/persona NAME`, `/persona none`. Stage 8b adds the optional trained side: `persona example`, `make-data` (training lines carrying the same persona block the chat uses), `attach`/`detach` (a fine-tuned version for a mask; a full copy of the weights, not an adapter) and `persona check` (do the facts about who the AI is survive the mask?).
 
 ## GPU training (Stage 1; see docs/GPU_GUIDE.md)
 ```bash

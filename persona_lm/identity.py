@@ -638,9 +638,10 @@ def load_probes(core):
     return doc
 
 
-def run_probes(core, generate, tok, ctx, doc, out=None):
+def run_probes(core, generate, tok, ctx, doc, out=None, personas=None):
     """Asks every probe in a fresh conversation, exactly as the chat would build the prompt (self-description, Person card, mood, memory), greedy decoding.
-    Nothing is written to the owner's memory or mood files (the copies are in RAM). Returns the answers list."""
+    Nothing is written to the owner's memory or mood files (the copies are in RAM). Returns the answers list.
+    personas (Stage 8b): an object with prompt_text() (a persona put on for this test only); None = no mask."""
     from .chatrepl import ChatSession
     from . import memory as MEM
     from . import person as PER
@@ -661,7 +662,7 @@ def run_probes(core, generate, tok, ctx, doc, out=None):
         budget = (ctx - doc["max_new"]) // 2 - 4
         sysline, _ = system_line(core.sections, count, max(budget, 8))
         s = ChatSession(tok, ctx, generate, system=sysline, settings={"max_new": doc["max_new"], "temperature": 0, "top_k": 0}, seed=0,
-                        clock=lambda: T, memory=store, mood=mood, tagger=tagger, person=card)
+                        clock=lambda: T, memory=store, mood=mood, tagger=tagger, person=card, personas=personas)
         s.say(p["prompt"])
         reply = s.history[-1][1] if s.history and s.history[-1][0] == "assistant" else ""
         tag = tagger.tag(reply) if reply else None

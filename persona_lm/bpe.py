@@ -23,7 +23,8 @@ _N_RESERVED = N_SPECIAL_SLOTS - len(_CORE_SPECIALS) - len(_PLANNED_SPECIALS)
 SPECIALS = _CORE_SPECIALS + _PLANNED_SPECIALS + ["<|reserved_%02d|>" % i for i in range(_N_RESERVED)]
 EOS, SYSTEM, USER, ASSISTANT, END = range(5)
 MEMORY, PERSONA, MOOD, SPEAKER, SUMMARY = range(5, 10)
-ROLE_ID = {"system": SYSTEM, "user": USER, "assistant": ASSISTANT}
+ROLE_ID = {"system": SYSTEM, "user": USER, "assistant": ASSISTANT,
+           "persona": PERSONA}       # Stage 8b: a persona block in chat data/prompt is just another message  <|persona|> text <|end|>  (never trained on by default)
 
 
 def _special_re(specials):
