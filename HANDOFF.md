@@ -1,0 +1,323 @@
+# PersonaLM: handoff document
+
+> **DO NOT DELETE OR REPLACE THIS FILE.** It lives at the root of the project (`persona_lm_project/HANDOFF.md`) and travels inside `persona_lm.zip`.
+> **Update it at the end of every stage** (append to the stage log in section 5, refresh sections 4, 6, 7, 12). A test (`tests/test_handoff.py`) fails if it is missing or loses its START HERE / stage-log / next-action sections.
+> Last updated: 2026-11-14 (project moved to `C:\Users\user\persona_lm_project`, GitHub upload started); before that 2026-11-13, end of **Stage 2** (Messenger importer + anonymizer) + owner's hardware facts, language requirement and the first REAL GPU check (9/9 PASS) recorded. Give this file to the next AI **together with `persona_lm.zip`**.
+
+## START HERE (read this first, about 2 minutes)
+
+**State (2026-11-14).** Stage 0 audit: done. **Stage 1 GPU backend: done**, maths verified on the owner's RTX 3050 (`check-gpu` 9/9 PASS); real speed/memory not yet measured.
+**Stage 2 Messenger importer + anonymizer: done**, tested on SYNTHETIC data only (never on the owner's real export). **Stage 3 (train/chat CLI, pretrain-then-finetune flow, freezing the real tokenizer) is NEXT and NOT started.** Stages 4-9 not started.
+Tests: 102 (100 pass + 2 PyTorch tests that run on the owner's machine). The owner's last unit-test run HUNG because of a bug in my test (fixed, see the incident in section 5); they have to re-extract the newest zip.
+
+**Waiting on the owner (ask for these, do not guess):**
+1. the end of `python -m unittest discover -s tests` from the fixed zip (should say `Ran 102 tests ... OK`);
+2. the output of the two `benchmark` commands in section 12 (real tokens/s and memory on the RTX 3050);
+3. their Messenger export folder (or confirmation they have not downloaded it yet), then the output of `messenger-scan` (they may blank the names);
+4. the languages they want ("any language I train it on" so far; vocab 16,000 was recommended but NOT yet explicitly accepted);
+5. an OK on `ctx=512` and the 32 reserved special tokens (defaults applied without a real answer: they said they did not understand);
+6. confirmation of the assumption "its own person, speaking in the owner's style".
+
+**What you can start before they answer:** the parts of Stage 3 that do not depend on those answers (guided pipeline commands, the chat REPL with slash-command stubs, a status/data-report command).
+**Do NOT freeze or train the real tokenizer** until items 4 and 5 are answered. Do not start Stage 4+ before Stage 3 is accepted.
+
+**How to work with this owner (learned the hard way):**
+- Not an expert. Windows 11 Home, PowerShell. Laptop: Acer Aspire 7, RTX 3050 6GB, 15.7 GB RAM, Python 3.14.6, torch 2.14.1+cu130, numpy 2.5.2. The project now lives at `C:\Users\user\persona_lm_project` (moved from the Desktop on 2026-11-14; always `cd C:\Users\user\persona_lm_project` before running commands). It is being put on the owner's GitHub as a PRIVATE repo named `persona_lm` (a `.gitignore` excludes `private/`, `*.jsonl`, checkpoints, models, `data/`, `runs/`, `exports/`; never commit real Messenger data). The owner copies commands straight from the chat.
+- Give each command in its own code block. Never put two commands next to each other without a line break (a pasted pair got glued into one and failed). Never write a placeholder path without saying "replace this" (their export path command ran with my literal placeholder).
+- Say how long a command should take, and tell them to press Ctrl+C and paste the screen if it takes more than 2 minutes. A test that waited for the keyboard cost them 3 hours.
+- Always deliver the **complete project zip, not a patch**, plus the updated `HANDOFF.md` ("merge all files, don't give me just the update"). Before delivering: update this file, run the suite inside a pseudo-terminal (section 11), unzip the zip into a clean folder and run the tests from there, then present both files.
+- Say plainly what was NOT tested. Own mistakes briefly, fix them, verify, move on.
+- Their network once failed DNS lookups (a DNS server of 8.8.8.8 was configured); PyTorch downloads are about 2 GB and slow, so avoid asking for large downloads.
+
+---
+
+## 1. What this project is
+
+The owner is building a **personal AI from scratch**, trained on their own Facebook Messenger messages, running locally.
+The starting point is `persona_lm`: pure Python + NumPy, with a byte-level BPE tokenizer, a Llama-style transformer with
+**hand-written backprop**, AdamW, resumable training, chat tuning, sampling and a GGUF exporter. It is CPU-only and has no
+memory, emotion, identity or self-modification features.
+
+The owner does **not** care how long it takes. They care about **correctness and learning how it works**.
+They are not an expert: explain things in plain language, avoid jargon, and say what is and is not tested.
+
+## 2. Working rules from the owner (follow these)
+
+- Python 3.10+. **Explain every new dependency before adding it.**
+- Keep code readable (the owner wants to learn from it).
+- Keep **runtime code free of training-only dependencies** (no PyTorch in `persona_lm.runtime`).
+- **Never claim something works unless it was tested.** Say "untested" when it is.
+- If a goal is unrealistic at this scale, say so plainly, but still build it rather than refusing.
+- Build **one milestone at a time**, in the order in section 6. After each: how to run it, what works, honest known limitations.
+- Tests for every milestone. The existing 26 tests (gradient, resume, etc.) must keep passing.
+- Ask at most 3 clarifying questions before starting if something blocks.
+- Plan approval: the owner said "build it now" (2026-11-12), which was taken as approval of the plan in section 7.
+
+## 3. Requirements (condensed from the owner's spec, in priority order)
+
+### Goal 1: GPU training
+- GPU backend using the local NVIDIA GPU (CUDA) with automatic CPU fallback. Recommend PyTorch or CuPy and explain why.
+- Same code must run on rented GPUs (Colab, Kaggle, RunPod, Lambda, Vast.ai). Give a step-by-step guide for one beginner-friendly option.
+- Checkpoints resume across machines (local <-> cloud). Mixed precision (fp16/bf16) and gradient accumulation for small VRAM.
+- A `benchmark` command printing tokens/sec.
+
+### Goal 2: Terminal-only
+- Everything through a CLI: prepare data, train, chat, inspect memory, approve/reject changes, export, serve.
+- Chat is a REPL with slash commands: `/memory /mood /identity /approve /reject /save /quit`.
+
+### Goal 3: Train on Facebook Messenger export
+- Importer for the JSON export (`messages[]`, `sender_name`, `timestamp_ms`, `content`). Fix the **mojibake** (UTF-8 bytes stored as latin-1 text).
+- Handle group chats and multiple conversation folders. Skip photos, stickers, calls, system messages. Merge consecutive messages from the same sender.
+- Owner chooses which sender is "me" and which chats to include.
+- Chat format where the AI learns to respond the way the owner would, with the previous N messages as context. **Loss counts only on the owner's messages.**
+- Everything stays local. Anonymize names and strip phone numbers, emails, addresses before any data goes to a cloud GPU.
+- Be honest about data size and propose a pretrain-then-finetune plan.
+
+### Goal 4: Memory graph (Obsidian-style)
+- Nodes (people, topics, events, feelings) with weighted links. Bigger circles = more important/connected.
+- Each memory: text, timestamp, source, emotion tag, importance score, links.
+- Retrieval into context while chatting. Maintenance: merge duplicates, decay unused, summarize clusters.
+- Export Markdown with `[[wiki-links]]` for Obsidian, plus a local HTML force-directed graph view.
+
+### Goal 5: Emotion and knowing the owner
+- Emotional state (valence/arousal + label) updated each turn, influencing tone. Train an emotion tagger from the owner's messages.
+- A "Person card" (name, relationships, habits, speaking style, topics, values): built from data, updated over time, plain editable file.
+
+### Goal 5b: Identity continuity across every upgrade
+The AI must stay the **same individual** through every retrain, fine-tune, size or architecture change.
+- **Identity lives outside the weights**: an "identity core" of files every version loads: (a) Person card + the AI's own self-description
+  (name, personality, speaking style, values, relation to owner), (b) full memory graph, (c) emotional baseline, (d) lineage log
+  (every version, date, change, who approved it).
+- **Weights are replaceable.** Upgrades reproduce old behavior via: continued training (same architecture); distillation
+  (old model's outputs + chat data as teacher) when size/architecture changes; and the **same frozen tokenizer, never changed**.
+- **Identity regression tests**: fixed probe prompts + saved answers; each candidate version is scored (similarity to old answers,
+  memory recall, tone/emotion match). Below the owner's threshold = auto-rejected, cannot be promoted.
+- **Protected identity core**: changes to name/values/core personality/temperament need a diff, the owner's **typed** confirmation,
+  a cooldown, and can **never** happen in the same step as a model upgrade.
+- **Growth, not drift**: drift score between versions, warn if too fast. Keep every version for rollback; allow chatting with an older version.
+- **Personas are masks**: switching persona never edits the identity core; the AI always knows it is the same one underneath.
+- **Be honest**: personality/memory continuity is achievable; an identical "mind" across different weights is not. Report how close each upgrade is.
+
+### Goal 6: Self-modification, always with the owner's confirmation
+- The AI may *propose*, never apply. Allowed: (a) memory + Person card edits, (b) new fine-tuning runs / LoRA adapters, (c) config changes.
+- Each proposal shows what/why/diff/how to undo. Every approved change is versioned in the lineage log and rollbackable.
+- **Neither the AI's output nor anything in the training data can approve a change.** Only the owner's input at the terminal (design: read approval from the interactive TTY only).
+
+### Goal 7: Personas
+- Switchable personas ("me", "a calm mentor", "a character"): system prompt + optional trained adapter. Be clear what is trained into weights vs. just prompting.
+
+### Goal 8: Export / embed in the owner's own app
+- One `export` command makes a portable package: (a) weights (GGUF via the existing exporter; safetensors if PyTorch is used),
+  (b) frozen tokenizer, (c) identity core, (d) memory graph (JSON + Markdown), (e) personas + LoRA adapters,
+  (f) manifest (version, size, lineage entry, checksums, license notes).
+- Clean inference library `persona_lm.runtime`: `ai = load("package/")`, `reply = ai.chat(message)`, `ai.memory`, `ai.mood`,
+  `ai.switch_persona(name)`. No training dependencies.
+- Must run on CPU/phone: verify without GPU and without PyTorch; GGUF must load in llama.cpp (state exactly what was and was not tested).
+- Memory/mood/Person card keep updating inside the app, with changes still needing confirmation and still logged. Packages can be re-imported for further growth.
+- Integration guide with example code: (1) Python app, (2) mobile/desktop via llama.cpp, (3) local HTTP server `persona_lm serve`.
+- **Privacy warning before export** (packages contain personal data) and a "weights only, no memories" option.
+
+## 4. Project layout now (after Stage 2)
+
+Flat package `persona_lm/`. The planned split into `core/`, `runtime/`, `train/` subpackages was **deliberately deferred** to Milestone 9 (when the
+no-torch runtime must be separated), to avoid a risky refactor now. `backend.py` and everything except `torch_backend.py` never import PyTorch.
+
+| File | Role | Stage 1 change |
+|---|---|---|
+| `model.py` | Config, presets, NumPy forward + hand-written backprop | `loss_and_grads(..., denom=)`; `s10m`/`s30m` default `ctx` 256 -> **512** |
+| `bpe.py`, `pretok.py` | Byte-level BPE, GPT-2 splitter | **32 reserved special-token ids** (`N_SPECIAL_SLOTS`), `Tokenizer.fingerprint()` (SHA-256) |
+| `data.py` | Token files, chat encoding with loss mask, sampler | `meta.json` now stores `tokenizer_sha256` |
+| `ckpt.py` | Atomic `.npz` checkpoints | `FORMAT_VERSION = 2` (`format_version` in meta); old files still load |
+| `train.py` | NumPy training loop | Refactored: shared `start_or_resume()`, `step_denominators()`, tokenizer check, new hp `loss_norm` |
+| `backend.py` (new) | `choose_backend()`: auto/torch/numpy, no torch import | new |
+| `torch_backend.py` (new) | PyTorch model (same maths), `TorchAdamW`, fp16 `LossScaler`, bf16/fp16 autocast, `train_torch`, `benchmark_torch`, `selfcheck` | new; **maths verified on the owner's RTX 3050 (check-gpu 9/9)**, speed/low-precision training still to measure |
+| `cli.py` | commands | `train --backend --device --precision --deterministic`, `benchmark --try-batches`, new `check-gpu` |
+| `optim.py`, `generate.py`, `gguf.py` | unchanged | |
+| `messenger.py` (new, Stage 2) | Messenger JSON export reader (mojibake fix, filters, sessions, merged turns), chat/window/session example builders, time split, size verdict, `import_export()` | new |
+| `anonymize.py` (new, Stage 2) | `Anonymizer`: names/phones/e-mails/links/handles/addresses/long numbers; `audit()` second look; `capitalised_word_report()` | new |
+| `data.py` | | Stage 2: per-message `train` flag (`as_messages(rec, with_train=True)`, `encode_chat` accepts 3-tuples), `prepare(..., val_docs=)` explicit validation set |
+| `cli.py` | | Stage 2: `messenger-scan`, `messenger-import`, `prepare --val-data`, console-safe `main()`, tokenizer training dedups chat messages |
+| `docs/MESSENGER_GUIDE.md` (new, Stage 2) | How to export from Facebook, run the importer, what anonymization does/does not do, data-size honesty, pretrain-then-finetune commands | new |
+| `tests/test_messenger.py` (new, Stage 2) | 58 tests on a synthetic export; a module guard makes any accidental keyboard read fail instead of hang | new |
+| `docs/GPU_GUIDE.md` (new) | Beginner guide: laptop (Windows) + Google Colab + moving runs + privacy | new |
+| `tests/test_persona_lm.py` | original 26 tests | unchanged, still pass |
+| `tests/test_stage1.py` (new) | 15 NumPy-side tests | new |
+| `tests/test_torch_backend.py` (new) | runs `selfcheck` on CPU/GPU; **skipped without PyTorch** | new |
+| `tests/test_handoff.py` (new) | 1 test, fails if this file is missing | new |
+
+Run tests: `python -m unittest discover -s tests -v` -> **102 tests: 100 pass, 2 skipped** (with PyTorch installed the 2 skipped run too) (the PyTorch ones) in the author's sandbox.
+
+## 5. Stage log
+
+### Stage 0: audit (done)
+Read all code, ran the baseline (26/26 pass), verified two suspicions by experiment (masked accumulation bug; sampler order is invariant to micro-batch split).
+
+### Stage 1: GPU backend (code complete; core maths VERIFIED on the owner's RTX 3050; speed/memory/low-precision training steps still to measure)
+**What was built:** PyTorch backend with CUDA/CPU auto-selection and NumPy fallback; mixed precision (bf16 on Ampere+, fp16 with dynamic loss scaling on older GPUs,
+fp32 otherwise); gradient accumulation; checkpoints interchangeable between NumPy and PyTorch and between machines; `benchmark` (tokens/s, peak memory,
+largest micro-batch that fits); `check-gpu` self-test against the NumPy reference; beginner guide for the laptop and for Colab.
+Also fixed audit findings 1, 2 (groundwork), 6 and applied the context/special-token defaults (see section 6).
+
+**Tested in the author's sandbox (NumPy only):**
+- masked gradient accumulation equals one big batch (float64, rel. error < 1e-10) for micro-batch splits 4, 2, 1; legacy "micro" mode still differs (proving the test can fail);
+- 4x2 vs 2x4 micro-batch/accum splits train to the same weights (rel. diff < 1e-4);
+- a pre-fix checkpoint resumes in legacy loss mode; new checkpoints carry `format_version`;
+- data from a different tokenizer is refused on resume and on `--init-from`; `prepare` records the fingerprint;
+- reserved-special-token layout, old 5-special tokenizer files still load;
+- backend fallback when PyTorch is missing; `torch_backend` imports without PyTorch; static name check of `torch_backend.py` finds no undefined names;
+- all 26 original tests (gradient finite differences, bit-exact resume, GGUF read-back ...).
+
+**VERIFIED ON REAL HARDWARE (owner ran `python -m persona_lm check-gpu`, 2026-11-13):** NVIDIA GeForce RTX 3050 6GB Laptop GPU (cc 8.6, bf16 fast), Windows 11, Python 3.14.6, PyTorch 2.14.1+cu130, NumPy 2.5.2. **9 checks passed, 0 failed:**
+forward logits match NumPy (max abs diff 3.58e-07); loss 4.895444 vs 4.895443; all 20 gradient tensors match (worst rel. error 6.18e-07); masked gradient accumulation == one big batch (3.87e-07); AdamW after 3 steps (1.12e-08);
+stop+resume == uninterrupted run on the GPU (max abs weight diff exactly 0.00e+00, tiny model, one machine); NumPy-started run continues on torch (1.06e-05); bf16 and fp16 forward losses close to fp32 (4.9125 / 4.9126 vs 4.9126).
+This also shows the project code runs on Python 3.14. (The owner's unit-test run output had not been seen to completion when this was written; the full suite was only seen to start.)
+
+**STILL NOT TESTED after that check:** the self-check's bf16/fp16 test compares only the FORWARD loss on a tiny random model. Not yet exercised on real hardware: a real bf16 TRAINING step at s10m/s30m size (the `benchmark` command does run one), the fp16 dynamic-loss-scaling overflow/skip path,
+`--deterministic`, speed (tokens/s), the largest micro-batch that fits in 6 GB, cross-machine resume (local <-> Colab), and `benchmark_torch`/`train_torch` on real data. The original (pre-check) list of what was untested was: forward/gradient parity with NumPy,
+AdamW parity, fp16/bf16 behaviour and loss scaling, `train_torch` resume, NumPy->torch continuation, `benchmark_torch`, `--deterministic`. They are covered by
+`selfcheck` / `python -m persona_lm check-gpu` / `tests/test_torch_backend.py`, **which the owner must run once on the Acer Aspire 7** (and ideally on Colab) and report the output.
+If any check FAILs the next AI should fix `torch_backend.py` first, before starting Stage 3 (training), because later stages depend on it.
+
+**Known limitations / honest notes**
+- "Exact resume across machines" is only achievable for data order, optimizer state and schedule. GPU arithmetic differs from CPU and between GPU models at about 1e-6 relative.
+  The CPU PyTorch path is intended to be bit-exact on resume (checked by `selfcheck`, untested). `--deterministic` is best effort (`warn_only`) and not guaranteed bit-exact on a GPU.
+- fp16 overflow handling skips the update and halves the loss scale (the step still counts toward the learning-rate schedule). Rare, but a design choice.
+- Checkpoints store float32 master weights, so low-precision training does not lose precision at rest; checkpoint files are not compressed and have no checksum file yet (only `format_version` and the tokenizer hash). Add checksums with the lineage log (Stage 6).
+- The `--loss-norm micro` legacy mode exists only so old runs resume unchanged; new runs use `batch`.
+- A GGUF file is still untested inside llama.cpp (unchanged from before).
+- Generation (chat) still uses the NumPy CPU forward without a KV cache.
+- The PyTorch benchmark measures raw forward+backward; real training steps are somewhat slower.
+
+### Stage 2: Messenger importer + anonymizer (done; tested on SYNTHETIC data only)
+**What was built:** `messenger-scan` (read-only table of conversations, busiest senders), `messenger-import` (interactive or flags: which sender is "me" - several names allowed -, which chats,
+mode `window` = one example per reply of the owner with the previous `--context` turns, loss only on that reply; or `session`), mojibake repair, filters (photos, stickers, voice, calls, unsent,
+shares, link-only, English system notices), merge of consecutive messages, sessions split at 6 h silence, group chats (others labelled `Person_NN: `), validation = most recent 5 % of
+SESSIONS (no leakage), anonymization on by default with a self-audit that makes the command exit with code 2 and `safe_to_upload=false` if a known name/e-mail/link/phone survives,
+`private/` folder (real names; never upload), `stats.json` with an honest data-size verdict, `prepare --val-data`, per-message `train` flag in the core encoder.
+Also: the guide's whole pipeline (tokenizer on public text + owner's messages -> pretrain -> chat fine-tune with `--init-from`) was run end to end on tiny demo data with the NumPy backend.
+
+**Tested (synthetic export imitating Facebook: newest-first split files, mojibake in text/names/titles, photo/sticker/call/unsent/system/share/link-only messages, group chat, archived thread,
+planted phone/e-mail/address/link):** mojibake round trip; folder discovery; chronological merge of message_N.json files; each filter; sender ranking; selection parsing and interactive prompt;
+sessions; merging; window/session example construction (context trimming oldest-first, over-long reply skipped not truncated, group labels, system line); anonymizer on names (full/first/last/nickname/any case),
+phone formats, dates/prices not touched, e-mail/URL/handle, addresses, common-word names, paranoid mode, disabled mode, audit; the name-regex speed shortcut gives identical results to the slow path (3000 random cases);
+whole import: no real name/phone/e-mail/link in train/val/stats, real names only in private/, emoji and accents survive, loss exactly on the target reply, validation sessions disjoint from training sessions,
+deterministic output, group filter, wrong `--me` error; command line scan -> import -> prepare, and decoding the masked tokens shows only the owner's words carry loss; a fake leaky anonymizer makes the command exit 2;
+the two new modules contain no network imports.
+
+**NOT tested / known limitations**
+- **Never run on a real Messenger export.** Real exports will contain surprises (message types, languages, participants, huge sizes). Ask the owner to run `messenger-scan` first and report anything odd.
+- System notices are recognised in **English** only; other languages' notices would be kept as if typed by a person.
+- Anonymization is not perfect and says so: names that are only *mentioned* need `--extra-names` (a frequency report helps); addresses are pattern-based (English/Philippine styles); identifying context is not detected.
+  The owner must read a sample of `train.jsonl` before uploading anything.
+- The owner's own name becomes `[ME]` in other people's messages (how friends address the owner); others become `Person_NN`. See the design note in section 6.
+- Training windows are random token slices: a window may start mid-example and lose its beginning (inherited from `Stream`).
+- Everything is loaded into RAM at once; speed measured: scrubbing about 19 microseconds per message regardless of the number of names (after the shortcut).
+- Token counts in the verdict are estimated as characters / 3.5 (rough; emoji and Filipino text use more tokens per character).
+- Unclosed-file `ResourceWarning`s remain in the original 26 tests.
+- **Incident (2026-11-13/14): the test suite HUNG for 3 hours on the owner's PC.** Cause: `test_import_needs_me_when_not_interactive` assumed `sys.stdin` is not a terminal. In an interactive PowerShell it is, so `messenger-import` correctly
+  asked "Who are you?" and waited for typing (the prompt was hidden because the test captures stdout). It passed in the author's sandbox only because stdin was a pipe there. **Fixed:** tests now fake the terminal state explicitly (`FakeTerminal`),
+  `setUpModule` makes any unexpected `input()` raise instead of wait, the typed-answers path now has its own test, and `choose_me` looks up `input` at call time. **Rule for every future stage: tests must not depend on the real stdin, and the full
+  suite must be run inside a pseudo-terminal before delivery** (snippet in section 11).
+
+## 6. Decisions
+
+**Made by the owner:**
+- Identity: **"its own person"** with its own name and personality, not a copy of the owner.
+  *Unconfirmed assumption:* it should speak in the owner's style (slang, humor, phrasing, learned from Messenger data) but be a **separate individual** whose name, opinions and
+  self-description live in the identity core. Note the tension with Goal 3 (loss only on the owner's messages teaches the model to speak *as* the owner); resolve in Stage 2/6.
+- Hardware (reported by the owner from PowerShell, 2026-11-13): **Acer Aspire 7**, **NVIDIA GeForce RTX 3050 6GB Laptop GPU** (6144 MiB VRAM, Ampere, so **bf16 is fast**; driver 616.64) plus an Intel UHD iGPU,
+  **15.7 GB RAM**, Intel Core i5-12450H (8 cores / 12 threads), **Windows 11 Home**, **Python 3.14.6**.
+  Consequences: `s10m` and `s30m` should train locally (optimizer+weights+grads need ~16 bytes per parameter before activations: ~0.3-0.55 GB); `s125m` needs ~2+ GB before activations and is realistic only with a tiny micro-batch or on a rented GPU
+  (run `benchmark --try-batches` to find out; no speed numbers have been measured on this GPU yet). The laptop should be plugged in and in performance mode.
+  **Python 3.14 caveats:** PyTorch officially ships Python 3.14 binaries incl. CUDA for Windows (PyTorch 2.11 support matrix lists Python >=3.10,<=3.14; a PyTorch maintainer confirmed in issue #169929, May 2026, that cp314 CUDA wheels exist, but not for CUDA 12.1/12.4).
+  PyTorch 2.11+ made CUDA 13.0 the stable default (cu128 was removed in 2.12; cu126 remains for older drivers). Install with
+  `python -m pip install numpy` and `python -m pip install torch --index-url https://download.pytorch.org/whl/cu130` (the owner's driver is far newer than CUDA 13.0 needs, as far as the author knows). **None of this was run by the author**, and
+  **this project's own code has not been run on Python 3.14** (author's sandbox used an older Python). If the PyTorch install fails ("No matching distribution found"), install Python 3.12 or 3.13 next to it (`py -3.12`) and use that.
+- Languages: the owner wants the model to **"learn any language I train it on"** (not yet named). The byte-level tokenizer can represent every script and emoji (round trip verified for English, Tagalog, Spanish, Japanese, Arabic, Korean, emoji), but a language missing from the
+  tokenizer's training text is split into many tokens (demo with a tiny vocabulary: Tagalog 0.91 tokens/char before vs 0.23 after adding Tagalog to the tokenizer text; Japanese 3.0, Korean 2.6, Arabic 1.9 without them), wasting the 512-token window.
+  So the tokenizer must be trained on text from ALL desired languages before it is frozen. Recommended vocabulary **16,000** (`s10m` = 16.8M params, `s30m` = 33.5M; 8,000 is enough only for Latin-script languages; 32,000 gives 22.9M / 41.7M).
+  A small model shares its capacity between languages: 2-3 languages are reasonable, more will each be thinner. Each language needs pretraining text in it; the owner's chats alone are not enough.
+- "Build it now" (2026-11-12) = go-ahead.
+
+**Applied by assumption (owner said they did not understand them, then said "build it now"):**
+- `ctx = 512` for `s10m` and `s30m` (was 256). Reason: persona prompt + memories + previous messages must share the window; fixed at training time.
+- A **reserved block of 32 special tokens** (5 original, 5 named for later features: memory/persona/mood/speaker/summary, 22 spare), so specials never need renumbering.
+Nothing irreversible has happened: no real tokenizer or model has been trained yet. **Explain these again in plain words and let the owner veto before the real tokenizer is trained (Stage 3).**
+
+**Design note (Stage 2) to resolve in Stages 5-6:** the training data teaches "answer the way the OWNER answers a friend" (assistant = the owner, user = friends; the owner's name is `[ME]`).
+At chat time the other side is the OWNER talking to an AI that is "its own person". That is a distribution shift. The planned fix is the identity core + a system/persona prompt
+(the AI's own name and self-description, "you speak in <owner>'s style and you are talking to <owner>"), possibly with a distillation/rewrite step; the `<|persona|>`, `<|memory|>`, `<|mood|>`, `<|speaker|>` reserved tokens exist for this.
+Decide how `[ME]` and `Person_NN` are shown/replaced at chat time (e.g. `[ME]` -> the owner's chosen display name inside the prompt).
+
+**Still open:** the owner's Messenger export size and number of chats (the PowerShell command was run with a placeholder path: `C:\path\to\unzipped\export`, so no numbers yet); the **list of languages** (and OK for vocab 16,000; "recommended" = yes);
+confirmation of the "own person in the owner's speaking style" assumption; result of `check-gpu` and of the unit tests on the owner's Python 3.14; OK for `ctx=512` + 32 reserved tokens.
+
+## 7. Milestone plan and status
+
+| # | Milestone | Status |
+|---|---|---|
+| 0 | Audit | done |
+| 1 | GPU backend | **done: check-gpu 9/9 PASS on RTX 3050; real speed/memory (benchmark) and a real training run still to be measured** |
+| 2 | Messenger importer + anonymizer | **done (synthetic data only; owner should run `messenger-scan` on the real export)** |
+| 3 | Train/chat CLI, pretrain-then-finetune flow (train the real tokenizer here) | **next** |
+| 4 | Memory graph (store, retrieval, decay/merge/summarize, Obsidian export, HTML graph) | |
+| 5 | Emotion + Person card | |
+| 6 | Identity core + lineage + regression tests (probes, scoring, drift, protected tier, distillation, checksums) | |
+| 7 | Self-modification (proposals, diffs, undo, TTY-only approval) | |
+| 8 | Personas | |
+| 9 | Export package + runtime library (no-torch runtime, KV cache, `serve`, package manifest, privacy gate; consider the `core/runtime/train` split here) | |
+
+Target layout (from the spec): `core/` (no training deps), `runtime/`, `train/`, `data/`, `memory/`, `mind/`, `identity/`, `proposals/`, `personas/`, `export/`, `cli/`.
+
+## 8. Audit findings and status
+
+| # | Finding | Status |
+|---|---|---|
+| 1 | Gradient accumulation wrong for masked data (rel. gradient error 1.16 on an uneven mask) | **fixed** (Stage 1, `loss_norm="batch"`; old runs keep `"micro"`) |
+| 2 | Special tokens occupy the first ids, adding one later renumbers everything | **fixed** by the reserved block; fingerprint check added; the real tokenizer is still to be trained in Stage 3 |
+| 3 | Context small (256) | **changed** to 512 for s10m/s30m |
+| 4 | Validation split is per document (leak with overlapping windows) | **fixed** for Messenger data (split by session, most recent held out; `prepare --val-data`) |
+| 5 | No KV cache in generation | open, Stage 9 |
+| 6 | Checkpoints lacked version/tokenizer hash | **fixed** (version + tokenizer hash); checksum file still open (Stage 6) |
+| 7 | `ResourceWarning`s from unclosed files in old tests/CLI | minor, open |
+
+Verified good: sampler draws the identical data order for any (batch, accum) split with the same product; checkpoint format is device-independent.
+
+## 9. Environment limits of the previous AI's sandbox
+
+1 CPU core, 4 GB RAM, **no GPU, no network, no PyTorch, no llama.cpp**. NumPy-side and file-format code is testable there; PyTorch/CUDA and llama.cpp loading are not.
+If you have a better environment, run `python -m persona_lm check-gpu` first and report real results.
+
+## 10. Honest expectations to keep telling the owner
+
+- A personal Messenger history alone (often ~1-10 MB of the owner's own text) is **not enough** to train a good model from scratch: pretrain on public dialogue-style text, then fine-tune on the owner's messages.
+- A small model holds a personality weakly; memory retrieval and the Person card carry more of "knowing the owner" than the weights.
+- Identity continuity is measurable (probe scores, drift score), not guaranteed identical across different weights.
+- The emotion tagger starts from weak heuristic labels (the data has none); the owner can correct samples.
+- Anything uploaded to a rented GPU leaves the owner's computer: only public or anonymized data.
+
+## 11. How to maintain this file
+
+At the end of every stage: add a "Stage N" entry to section 5 (what was built, what was tested, what was NOT tested, limitations), update the status tables in 4, 6, 7, 8,
+bump the "Last updated" line, run the tests, and rebuild `persona_lm.zip` with this file inside. Never delete it. If you are a different AI taking over, read sections 1-3 and 5-6 first.
+
+Pseudo-terminal check before every delivery (the sandbox's stdin is a pipe, the owner's is a terminal; behaviours that differ between them must be tested):
+
+```python
+import pty, subprocess, sys
+master, slave = pty.openpty()
+p = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests"], stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
+print(p.returncode, p.stdout.decode()[-200:])      # a TimeoutExpired here means something is waiting for the keyboard
+```
+
+## 12. Next action
+
+0. The owner's unit-test run is the one that hung (see the incident in section 5); they must re-extract the new zip. A quick proof on their machine without re-downloading: `cmd /c "python -m unittest discover -s tests < NUL"`.
+1. Owner has PyTorch installed (note: their network first failed DNS lookups for download.pytorch.org; it worked later) and `check-gpu` passed. Ask for: (a) the END of `python -m unittest discover -s tests` on their machine (Ran N tests / OK);
+   (b) `python -m persona_lm benchmark --size s10m --vocab 16000 --try-batches 1,2,4,8,16,32` and the same for `s30m` (real tokens/s, peak memory, largest micro-batch on 6 GB; also the first real bf16 training steps);
+   (c) their Messenger export folder (`Get-ChildItem "$env:USERPROFILE\Downloads","$env:USERPROFILE\Desktop","$env:USERPROFILE\Documents" -Recurse -Filter message_1.json -ErrorAction SilentlyContinue | Select-Object -First 3 FullName`;
+   nothing found = not downloaded yet: docs/MESSENGER_GUIDE.md section 1), then `messenger-scan`; (d) the languages.
+2. **Stage 3** (train/chat CLI + pretrain-then-finetune flow): a single guided command or script set for tokenizer -> pretrain -> chat fine-tune; a better `chat` REPL with the slash commands
+   (`/memory /mood /identity /approve /reject /save /quit`, initially stubs that say which stage implements them), KV-cache-free generation is fine for now; decide the pretraining corpus with the owner;
+   **freeze the real tokenizer** (re-explain `ctx=512` and the 32 reserved tokens first, get an OK); a `data-report`/`status` command; document the schedule for fine-tuning (low LR, few epochs, early stop on validation loss).
+3. If the benchmark/unit tests expose problems in `torch_backend.py` (fp16 loss scaling, memory), fix them before relying on long runs.

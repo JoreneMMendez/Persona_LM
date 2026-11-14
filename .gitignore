@@ -1,0 +1,12 @@
+﻿private/
+*.jsonl
+*.npz
+*.gguf
+*.pt
+*.safetensors
+__pycache__/
+*.pyc
+.venv/
+data/
+runs/
+exports/
