@@ -743,6 +743,45 @@ def cmd_export(a):
         print("verify: max logit difference vs the checkpoint = %.5f" % float(np.abs(l1 - l2).max()))
 
 
+def cmd_export_package(a):
+    """python -m persona_lm export-package --dir identity_core --out NEWFOLDER --yes : one folder with weights, tokenizer, identity, memory ... (Stage 9b)."""
+    from . import export_pkg as EX
+    try:
+        core = ID.Core(a.dir)
+        EX.export_package(core, a.out, version=a.version, fmt=a.format, gguf_type=a.gguf_type, weights_only=a.weights_only, memory=not a.no_memory,
+                          person=not a.no_person, mood=not a.no_mood, personas=not a.no_personas, confirmed=a.yes)
+    except (EX.ExportProblem, ID.IdentityProblem, LIN.LineageProblem, OSError, ValueError) as e:
+        raise SystemExit("error: %s" % e)
+
+
+def cmd_verify_package(a):
+    from . import export_pkg as EX
+    try:
+        problems, notes = EX.verify_package(a.package)
+    except EX.ExportProblem as e:
+        raise SystemExit("error: %s" % e)
+    for n in notes:
+        print("note: " + n)
+    for p in problems:
+        print("PROBLEM: " + p)
+    if problems:
+        raise SystemExit("The package is damaged or was changed (%d problem(s))." % len(problems))
+    print("OK: every file that should not change matches its checksum.")
+
+
+def cmd_serve(a):
+    from . import runtime as RT
+    from . import server as SV
+    if bool(a.package) == bool(a.core):
+        raise SystemExit("error: give exactly one of --package FOLDER or --core FOLDER")
+    try:
+        kw = dict(max_new=a.max_new, temperature=a.temperature, seed=a.seed)
+        ai = RT.load_package(a.package, **kw) if a.package else RT.load(a.core, version=a.version, **kw)
+        SV.serve(ai, host=a.host, port=a.port, token=a.token, allow_persona_switch=a.allow_persona_switch)
+    except (RT.RuntimeProblem, SV.ServerProblem, OSError) as e:
+        raise SystemExit("error: %s" % e)
+
+
 def _days(tokens, tps):
     return "%.1f days" % (tokens / tps / 86400) if tps * 86400 < tokens * 3 else "%.1f hours" % (tokens / tps / 3600)
 
@@ -1120,6 +1159,28 @@ def build_parser():
     q.add_argument("--limit", type=int, default=None); q.add_argument("--max-new", type=int, default=80)
     q.add_argument("--temperature", type=float, default=0.7); q.add_argument("--seed", type=int, default=0)
     s.set_defaults(fn=cmd_identity)
+
+    s = sub.add_parser("export-package", help="Stage 9b: put the AI in ONE new folder (weights, tokenizer, identity, memory, ...) with checksums, to run it elsewhere")
+    s.add_argument("--dir", default="identity_core"); s.add_argument("--out", required=True, help="a NEW folder (nothing is overwritten)")
+    s.add_argument("--version", default=None, help="default: the current version"); s.add_argument("--format", choices=("npz", "gguf", "both"), default="npz")
+    s.add_argument("--gguf-type", choices=("f32", "f16", "q8_0"), default="f16")
+    s.add_argument("--weights-only", action="store_true", help="only the model and the tokenizer (no identity, memory, card, mood or masks)")
+    for flag in ("memory", "person", "mood", "personas"):
+        s.add_argument("--no-" + flag, action="store_true", help="leave the %s out" % flag)
+    s.add_argument("--yes", action="store_true", help="I read the privacy warning (without it the command only prints the warning)")
+    s.set_defaults(fn=cmd_export_package)
+
+    s = sub.add_parser("verify-package", help="Stage 9b: check a package folder against its checksums")
+    s.add_argument("package")
+    s.set_defaults(fn=cmd_verify_package)
+
+    s = sub.add_parser("serve", help="Stage 9b: a small local web server (JSON over HTTP) for your own app; see docs/EXPORT_GUIDE.md")
+    s.add_argument("--package", default=None); s.add_argument("--core", default=None); s.add_argument("--version", default=None)
+    s.add_argument("--host", default="127.0.0.1", help="default: this computer only; another host needs --token")
+    s.add_argument("--port", type=int, default=8765); s.add_argument("--token", default=None)
+    s.add_argument("--allow-persona-switch", action="store_true", help="let POST /persona switch the mask (off by default)")
+    s.add_argument("--max-new", type=int, default=120); s.add_argument("--temperature", type=float, default=0.8); s.add_argument("--seed", type=int, default=0)
+    s.set_defaults(fn=cmd_serve)
 
     s = sub.add_parser("check-gpu", help="check the PyTorch/GPU backend against the NumPy reference and print a report")
     s.add_argument("--device", default="auto")

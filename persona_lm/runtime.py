@@ -7,6 +7,8 @@
     ai.mood                                  # the Mood (or None)
     ai.switch_persona("calm mentor")         # puts a mask on (logged); "none" takes it off
 
+Or from an export package (Stage 9b):  ai = rt.load_package("my_ai_package")   (checksums are verified first; no lineage log there, so persona switches are not logged)
+
 Or without an identity core:  rt.load(ckpt="run/ckpt.npz", tokenizer="tok.json", system="You are Luna.")
 
 What this file imports: numpy, the tokenizer, the model's forward pass (inference only), the KV cache, and the chat/memory/mood/persona/identity
@@ -20,6 +22,7 @@ Safety rules (the same as in the chat screen):
     typed `proposal` / chat commands in a terminal.
   * switch_persona is a method of YOUR program (the owner's side). It writes to the lineage log, and it never touches the identity core.
 """
+import json
 import os
 
 from . import emotion as EMO
@@ -43,8 +46,9 @@ class RuntimeProblem(Exception):
 class AI:
     """A loaded AI. Make one with load(). One AI = one conversation (reset() starts a new one)."""
 
-    def __init__(self, session, core=None, personas=None, tok=None, cfg=None, version=None):
+    def __init__(self, session, core=None, personas=None, tok=None, cfg=None, version=None, name=None):
         self.session, self.core, self.personas, self.tok, self.cfg, self.version = session, core, personas, tok, cfg, version
+        self._name = name
         self.last_notes = []             # extra lines the chat screen would print after a reply (what was recalled, mood, window notes)
 
     # -- talking
@@ -85,7 +89,7 @@ class AI:
 
     @property
     def name(self):
-        return self.core.sections["Name"] if self.core is not None else None
+        return self.core.sections["Name"] if self.core is not None else self._name
 
     @property
     def persona(self):
@@ -94,7 +98,7 @@ class AI:
     def switch_persona(self, name):
         """Owner-side switch of the mask (a name, or "none"). Returns a sentence. Logged; the identity core is not touched."""
         if self.personas is None:
-            raise RuntimeProblem("This AI was loaded without an identity core, so it has no personas. Load it with load(core_folder).")
+            raise RuntimeProblem("This AI has no personas (it was loaded without an identity core or its package has none).")
         try:
             return self.personas.use(name)
         except PERS.PersonaProblem as e:
@@ -165,13 +169,99 @@ def load(path=None, *, ckpt=None, tokenizer=None, version=None, memory=None, moo
         if type(e).__name__ in ("MemoryProblem", "LineageProblem"):
             raise RuntimeProblem(str(e))
         raise
-    sampler = sample_ids_cached if fast else sample_ids
     if system is None and core is not None:
         count = lambda text: len(tok.encode(text, allow_special=False))
         system, _left_out = ID.system_line(core.sections, count, max(((cfg.ctx - max_new) // 2) - 4, 8))
-    session = ChatSession(tok, cfg.ctx, lambda ids, **kw: sampler(params, cfg, ids, **kw), system=system, save_dir=".",
-                          settings={"max_new": max_new, "temperature": temperature, "top_k": top_k}, seed=seed,
-                          memory=store, memory_tokens=memory_tokens, mood=mood_obj, tagger=tagger, person=card, person_tokens=person_tokens,
-                          identity=core, personas=personas,
-                          proposals=PRO.Proposals(core, memory_path=memory, person_path=person) if core is not None else None)
+    session = _session(params, cfg, tok, system, max_new, temperature, top_k, seed, fast, store, mood_obj, tagger, card, memory_tokens, person_tokens,
+                       core, personas, PRO.Proposals(core, memory_path=memory, person_path=person) if core is not None else None)
     return AI(session, core=core, personas=personas, tok=tok, cfg=cfg, version=name)
+
+
+def _session(params, cfg, tok, system, max_new, temperature, top_k, seed, fast, store, mood_obj, tagger, card, memory_tokens, person_tokens, core, personas, proposals):
+    sampler = sample_ids_cached if fast else sample_ids
+    return ChatSession(tok, cfg.ctx, lambda ids, **kw: sampler(params, cfg, ids, **kw), system=system, save_dir=".",
+                       settings={"max_new": max_new, "temperature": temperature, "top_k": top_k}, seed=seed,
+                       memory=store, memory_tokens=memory_tokens, mood=mood_obj, tagger=tagger, person=card, person_tokens=person_tokens,
+                       identity=core, personas=personas, proposals=proposals)
+
+
+class PackagePersonas:
+    """The masks of an export package. Same small interface as personas.Personas, but there is no identity core and no lineage log here: a switch is
+    kept in memory only (it is not logged and not saved), and it never changes the identity text."""
+
+    def __init__(self, ai_name, d):
+        self.ai_name, self.d = ai_name, d
+        self.active = d.get("active") if d.get("active") in d["personas"] else None
+
+    def names(self):
+        return sorted(self.d["personas"], key=str.casefold)
+
+    def prompt_text(self):
+        return None if self.active is None else PERS.block_text(self.ai_name, self.active, self.d["personas"][self.active]["text"])
+
+    def use(self, name):
+        wanted = " ".join(str(name).split()).casefold()
+        if wanted in PERS.RESERVED:
+            new = None
+        else:
+            hit = [k for k in self.d["personas"] if k.casefold() == wanted]
+            if not hit:
+                raise PERS.PersonaProblem("There is no persona called %r. Personas: %s." % (name, ", ".join(self.names()) or "(none)"))
+            new = hit[0]
+        if new == self.active:
+            return "Already %s." % ("wearing %r" % new if new else "without a mask")
+        self.active = new
+        return "Now wearing %r. Underneath, still %s." % (new, self.ai_name) if new else "Mask off: speaking as %s itself." % self.ai_name
+
+    def describe(self):
+        if not self.d["personas"]:
+            return "No personas in this package."
+        return "\n".join(["Personas (masks: they never change who %s is):" % self.ai_name] +
+                         ["  %s %-20s %s" % ("*" if n == self.active else " ", n, self.d["personas"][n]["text"]) for n in self.names()])
+
+
+def load_package(folder, *, system=None, max_new=120, temperature=0.8, top_k=40, seed=0, fast=True, memory_tokens=None, person_tokens=None):
+    """Loads an AI from an export package folder (made by `export-package`). The checksums of the files that never change are verified first.
+    A package has no lineage log and no proposal store, so the AI cannot file proposals here and persona switches are not logged."""
+    from . import export_pkg as EX
+    try:
+        problems, _notes = EX.verify_package(folder)
+        if problems:
+            raise RuntimeProblem("The package is damaged or was changed: " + "; ".join(problems[:5]))
+        m = EX.read_manifest(folder)
+        if not m["weights"]["npz"]:
+            raise RuntimeProblem("This package has only a GGUF file (for llama.cpp). The Python runtime needs the .npz weights: export again with --format npz or both.")
+        got = load_ckpt(os.path.join(folder, "model", "ckpt.npz"))
+        if got is None:
+            raise RuntimeProblem("Cannot read model/ckpt.npz in %s." % folder)
+        params, cfg, tok = got[0], Config.from_dict(got[2]["cfg"]), Tokenizer.load(os.path.join(folder, "tokenizer.json"))
+        if tok.fingerprint() != m["model"]["tokenizer_sha256"]:
+            raise RuntimeProblem("The tokenizer does not match the one the package was made with.")
+        c = m["contains"]
+        name, baseline, sections = m["name"], (0.1, 0.0), None
+        if c.get("identity"):
+            with open(os.path.join(folder, "identity", "identity.json"), encoding="utf-8") as f:
+                ident = json.load(f)
+            name, baseline, sections = ident["name"], tuple(ident["baseline"]), ident["sections"]
+            if system is None:
+                count = lambda text: len(tok.encode(text, allow_special=False))
+                system, _ = ID.system_line(sections, count, max(((cfg.ctx - max_new) // 2) - 4, 8))
+        store = MemoryStore(os.path.join(folder, "memory", "memory.json")) if c.get("memory") else None
+        mood_obj = tagger = None
+        if c.get("mood"):
+            mood_obj = EMO.Mood(os.path.join(folder, "mood", "mood.json"), baseline=baseline)
+            mood_obj.baseline = list(baseline)
+            tagger = EMO.Tagger()
+        card = PER.load(os.path.join(folder, "person", "person.md")) if c.get("person") else None
+        personas = None
+        if c.get("personas"):
+            with open(os.path.join(folder, "personas", "personas.json"), encoding="utf-8") as f:
+                personas = PackagePersonas(name, json.load(f))
+    except (EX.ExportProblem, PER.PersonProblem, EMO.EmotionProblem, PERS.PersonaProblem, OSError, ValueError, KeyError) as e:
+        raise RuntimeProblem(str(e))
+    except Exception as e:
+        if type(e).__name__ == "MemoryProblem":
+            raise RuntimeProblem(str(e))
+        raise
+    session = _session(params, cfg, tok, system, max_new, temperature, top_k, seed, fast, store, mood_obj, tagger, card, memory_tokens, person_tokens, None, personas, None)
+    return AI(session, personas=personas, tok=tok, cfg=cfg, version=m["version"], name=name)

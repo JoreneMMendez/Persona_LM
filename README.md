@@ -97,6 +97,15 @@ print(ai.chat("hello"))            # also: ai.memory, ai.mood, ai.switch_persona
 ```
 Replies are generated with a KV cache (`persona_lm/fastgen.py`), much faster than re-reading the whole window for every word. Text passed to `chat()` is never a command, and the AI's words can never approve a change or switch a persona.
 
+## Take it with you: export package + local server (Stage 9b; see docs/EXPORT_GUIDE.md)
+
+```bash
+python -m persona_lm export-package --dir identity_core --out my_ai_package      # prints a privacy warning; add --yes to write
+python -m persona_lm verify-package my_ai_package
+python -m persona_lm serve --package my_ai_package                                # http://127.0.0.1:8765, JSON over HTTP
+```
+In Python: `rt.load_package("my_ai_package")`. The package holds weights, tokenizer, identity, memory (JSON + Markdown), Person card, mood and masks, with checksums; `--weights-only` leaves out everything personal except what the weights learned (which can still leak training text).
+
 ## GPU training (Stage 1; see docs/GPU_GUIDE.md)
 ```bash
 python -m persona_lm check-gpu                       # does the GPU code match the NumPy reference on this machine?
