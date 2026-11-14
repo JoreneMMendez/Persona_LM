@@ -25,3 +25,9 @@ person_card.prev.md
 emotion_samples.jsonl
 emotion_model.json
 persona_settings.json
+# public pretraining text and downloads (large; see grab_data.py)
+public_text/
+fineweb2/
+*.parquet
+data_pre/
+data_chat/
