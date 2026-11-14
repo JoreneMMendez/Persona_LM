@@ -31,3 +31,12 @@ fineweb2/
 *.parquet
 data_pre/
 data_chat/
+
+*.orig
+data_msgr_clean/
+public_mix/
+public_clean/
+tok_sample/
+work/
+work2/
+tok_made.json
