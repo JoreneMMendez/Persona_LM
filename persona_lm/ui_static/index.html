@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="plm-token" content="__TOKEN__">
+<meta name="color-scheme" content="light dark">
+<title>PersonaLM</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="app" id="app">
+  <aside class="sidebar" id="sidebar" aria-label="Sections">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">PersonaLM</span>
+    </div>
+    <nav id="nav" class="nav"></nav>
+    <div class="sidebar-foot">
+      <span class="dot" id="conn-dot" aria-hidden="true"></span>
+      <span id="conn-text" class="muted small">Connecting…</span>
+    </div>
+  </aside>
+  <div class="scrim" id="scrim" hidden></div>
+  <div class="content">
+    <header class="topbar">
+      <button class="btn icon ghost menu-btn" id="menu-btn" aria-label="Open menu" aria-controls="sidebar" aria-expanded="false"></button>
+      <h1 id="page-title" class="page-title" tabindex="-1">PersonaLM</h1>
+      <div class="spacer"></div>
+      <button class="btn ghost" id="help-btn" aria-haspopup="dialog">Shortcuts <kbd>?</kbd></button>
+      <button class="btn icon ghost" id="theme-btn" aria-label="Switch theme" title="Switch theme (t)"></button>
+    </header>
+    <main id="main" class="main" tabindex="-1" aria-live="polite"></main>
+  </div>
+</div>
+<div class="toasts" id="toasts" role="status" aria-live="polite" aria-atomic="false"></div>
+<dialog id="help-dialog" class="dialog" aria-labelledby="help-title">
+  <div class="dialog-body">
+    <h2 id="help-title">Keyboard shortcuts</h2>
+    <dl class="keys">
+      <div><dt><kbd>t</kbd></dt><dd>Switch light / dark / system theme</dd></div>
+      <div><dt><kbd>g</kbd> then <kbd>1</kbd>–<kbd>9</kbd></dt><dd>Go to a section in the menu order</dd></div>
+      <div><dt><kbd>[</kbd></dt><dd>Hide or show the menu</dd></div>
+      <div><dt><kbd>?</kbd></dt><dd>This list</dd></div>
+      <div><dt><kbd>Esc</kbd></dt><dd>Close a window or the menu</dd></div>
+    </dl>
+    <div class="dialog-actions"><button class="btn primary" id="help-close">Close</button></div>
+  </div>
+</dialog>
+<noscript>The PersonaLM page needs JavaScript (it loads nothing from the internet).</noscript>
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>

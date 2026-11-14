@@ -829,6 +829,14 @@ def cmd_serve(a):
         raise SystemExit("error: %s" % e)
 
 
+def cmd_ui(a):
+    from . import ui_server as UI
+    try:
+        UI.serve(a.root, port=a.port, open_browser=not a.no_open)
+    except (UI.UIProblem, OSError) as e:
+        raise SystemExit("error: %s" % e)
+
+
 def _days(tokens, tps):
     return "%.1f days" % (tokens / tps / 86400) if tps * 86400 < tokens * 3 else "%.1f hours" % (tokens / tps / 3600)
 
@@ -1231,6 +1239,12 @@ def build_parser():
     s.add_argument("--allow-persona-switch", action="store_true", help="let POST /persona switch the mask (off by default)")
     s.add_argument("--max-new", type=int, default=120); s.add_argument("--temperature", type=float, default=0.8); s.add_argument("--seed", type=int, default=0)
     s.set_defaults(fn=cmd_serve)
+
+    s = sub.add_parser("ui", help="Web UI (stage U0): a local, offline web page for the whole system; opens your browser; see docs/UI_PROMPT.md")
+    s.add_argument("--port", type=int, default=8777, help="default 8777 (0 = any free port)")
+    s.add_argument("--root", default=".", help="the project folder (default: the folder you run the command from)")
+    s.add_argument("--no-open", dest="no_open", action="store_true", help="do not open the browser; just print the link")
+    s.set_defaults(fn=cmd_ui)
 
     s = sub.add_parser("check-gpu", help="check the PyTorch/GPU backend against the NumPy reference and print a report")
     s.add_argument("--device", default="auto")

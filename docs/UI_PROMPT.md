@@ -2,7 +2,7 @@
 
 Paste everything in the block below into a NEW AI session together with the newest project zip and `HANDOFF.md`.
 Change the last line (`Start with stage: U0`) to the stage you want: U0, U1, ... U7. One stage per session.
-Status of each stage: HANDOFF.md, section 7 (rows U0-U7). Nothing is built yet.
+Status of each stage: HANDOFF.md, section 7 (rows U0-U7). U0 is built (2026-11-15); U1-U7 are not.
 
 ```text
 You are continuing the PersonaLM project (zip + HANDOFF.md attached). Read HANDOFF.md fully first, then do ONLY the stage I name below.
