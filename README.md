@@ -114,4 +114,5 @@ that stop-and-resume gives bit-identical weights, tokenizer round trips, and tha
   load `aria.gguf` with `llama-cli`, and compare `llama-tokenize` output against `Tokenizer.encode` on a sentence.
   If either differs, tell me the exact output and I will fix the writer. Q4_K_M: run llama.cpp's `llama-quantize` on the f16 file.
 - Text generation recomputes the window each token (no KV cache). Fine for testing; slow for long replies.
-- Not in this package yet: identity core, self-modification, personas, export package. See `HANDOFF.md` for the plan and status.
+- Identity core (Stage 6): see docs/IDENTITY_GUIDE.md.
+- Not in this package yet: self-modification, personas, export package. See `HANDOFF.md` for the plan and status.

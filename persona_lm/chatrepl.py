@@ -3,7 +3,9 @@
 Design rules (they matter for Stage 7, when the AI may PROPOSE changes):
   * Commands are read ONLY from what the person types. The model's replies are never looked at for commands, so nothing the AI
     writes (or anything in its training data) can run /approve, /reject or any other command.
-  * /identity /approve /reject exist already but are honest stubs: they say which stage builds them and change nothing.
+  * /approve /reject exist already but are honest stubs: they say which stage builds them and change nothing.
+  * /identity (Stage 6) shows the identity core when the chat was started with --core DIR. It only READS: protected changes can be made only
+    with the `identity` commands, typed in a terminal, never from inside the chat and never from anything the AI writes.
   * /mood (Stage 5) works when the chat was started with --mood FILE. Only what the person TYPES moves the mood (each message is tagged by the
     emotion tagger); the model's own words never do, a refused or empty-reply turn leaves the mood as it was. The mood goes into the prompt as one
     block  <|mood|> label valence arousal <|end|>  after the system line, and nudges the sampling temperature by at most 15 %.
@@ -23,7 +25,6 @@ from .memory import MemoryConflict, MemoryProblem, parse_remember
 
 # command -> (stage that builds it, what it will do)
 PLANNED = {
-    "/identity": (6, "show the AI's identity card (name, personality, values) and its version history"),
     "/approve":  (7, "approve a change the AI has PROPOSED to its memory, settings or training"),
     "/reject":   (7, "reject a change the AI has proposed"),
 }
@@ -37,20 +38,21 @@ HELP = """Commands (type them at the  you>  prompt):
                     ([[Name]] or [[kind:Name]] makes a node; #emotion, *importance 0-1 and !pin go at the END)
   /forget <id>      (needs --memory) delete one memory for good, e.g. /forget m0003
   /mood             (needs --mood) the AI's current feeling; /mood tag <text> shows how a text would be read; /mood reset goes back to the baseline
+  /identity         (needs --core) the AI's identity card, its versions and recent history (read only)
   /save [file]      write the conversation to a text file on this computer (never overwrites)
   /system <text>    set the system line (how the AI is introduced to itself) and start again
   /temp <0-2>       randomness of the replies (0 = always the most likely word, 0.8 = default)
   /max <n>          longest reply in tokens
   /quit             leave
   //text            send a message that starts with a slash, e.g. //shrug
-Not built yet (they only explain what they will do): /identity /approve /reject"""
+Not built yet (they only explain what they will do): /approve /reject"""
 
 
 class ChatSession:
     """One conversation. generate(prompt_ids, seed=..., max_new=..., temperature=..., top_k=...) -> list of new token ids."""
 
     def __init__(self, tok, ctx, generate, system=None, save_dir=".", settings=None, seed=0, clock=time.time, memory=None, memory_tokens=None,
-                 mood=None, tagger=None, person=None, person_tokens=None):
+                 mood=None, tagger=None, person=None, person_tokens=None, identity=None):
         self.tok, self.ctx, self.generate = tok, ctx, generate
         self.system = system
         self.save_dir = save_dir
@@ -73,6 +75,7 @@ class ChatSession:
         self.person_tokens = person_tokens if person_tokens is not None else max(16, ctx // 6)
         self.last_person_left = 0                # card facts that did not fit the budget
         self._told_about_card = False
+        self.identity = identity                # an identity.Core, or None (no identity core in this chat)
 
     # ------------------------------------------------------------ what the model sees
     def _message_ids(self, role, text):
@@ -253,6 +256,10 @@ class ChatSession:
             return self.memory_command(name, arg), False
         if name == "/mood":
             return self.mood_command(arg), False
+        if name == "/identity":
+            if self.identity is None:
+                return "No identity core in this chat. Start it with:  python -m persona_lm chat --core identity_core ...   (make one with: identity init)", False
+            return self.identity.describe(), False
         if name in PLANNED:
             stage, what = PLANNED[name]
             msg = "%s is not built yet. It is planned for Stage %d: it will %s. Nothing was changed." % (name, stage, what)

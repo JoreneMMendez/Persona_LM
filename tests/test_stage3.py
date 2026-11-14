@@ -182,7 +182,7 @@ class ChatTests(Base):
         s = self.session()
         s.handle("hello")
         before = list(s.history)
-        for cmd, stage in (("/identity", 6), ("/approve", 7), ("/reject", 7)):          # /mood became real in Stage 5 (tests/test_stage5.py)
+        for cmd, stage in (("/approve", 7), ("/reject", 7)):          # /mood became real in Stage 5, /identity in Stage 6 (tests/test_stage6.py)
             text, quit_ = s.handle(cmd)
             self.assertIn("Stage %d" % stage, text)
             self.assertIn("Nothing was changed", text)
@@ -273,7 +273,7 @@ class ChatTests(Base):
         chatrepl.run_repl(s, input_fn=lambda prompt: next(typed), out=shown.append)
         text = "\n".join(shown)
         self.assertIn("ai> sure thing", text)
-        self.assertIn("Stage 6", text)
+        self.assertIn("No identity core in this chat", text)           # /identity is real since Stage 6; without --core it says how to start one
         self.assertEqual(len(self.gen.calls), 1)
 
     def test_repl_ends_cleanly_on_end_of_input(self):
@@ -371,7 +371,7 @@ class PipelineTests(Base):
                       "--max-new", "6", "--save-dir", self.root])
         out = buf.getvalue()
         self.assertIn("Chat ready", out)
-        self.assertIn("Stage 6", out)
+        self.assertIn("No identity core in this chat", out)
         self.assertTrue(os.path.exists(self.p("out.txt")))
 
     def test_a_frozen_tokenizer_is_never_overwritten_or_swapped(self):

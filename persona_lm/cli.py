@@ -21,6 +21,8 @@ from . import memory as MEM
 from . import memory_export as MEX
 from . import emotion as EMO
 from . import person as PER
+from . import identity as ID
+from . import lineage as LIN
 from .generate import complete, sample_ids
 from .gguf import export_model, params_from_gguf, read_gguf
 from .model import PRESETS, Config, forward, init_params, loss_and_grads, preset, zero_grads
@@ -165,6 +167,17 @@ def cmd_generate(a):
 
 
 def cmd_chat(a):
+    core = None
+    if getattr(a, "core", None):                        # Stage 6: the identity core fills in what was not typed; checked BEFORE the (slow) model load
+        try:
+            core = ID.Core(a.core)
+            _fill_from_core(a, core)
+        except (ID.IdentityProblem, LIN.LineageProblem, OSError) as e:
+            raise SystemExit("error: %s" % e)
+    elif getattr(a, "version", None):
+        raise SystemExit("error: --version only works together with --core DIR")
+    if not a.ckpt or not a.tokenizer:
+        raise SystemExit("error: chat needs --ckpt and --tokenizer (or --core DIR with a registered version)")
     store = None
     if a.memory:                                        # checked BEFORE the (slow) model load, so a broken memory file fails at once
         try:
@@ -177,7 +190,9 @@ def cmd_chat(a):
             model = EMO.NaiveBayes.load(a.emotion_model) if getattr(a, "emotion_model", None) else None
             extra = EMO.load_lexicon_file(a.lexicon) if getattr(a, "lexicon", None) else None
             tagger = EMO.Tagger(model, extra)
-            mood = EMO.Mood(a.mood)
+            mood = EMO.Mood(a.mood, baseline=core.baseline() if core else (0.1, 0.0))
+            if core:
+                mood.baseline = list(core.baseline())       # the identity's temperament wins over a baseline stored in an old mood file
         elif getattr(a, "emotion_model", None) or getattr(a, "lexicon", None):
             raise SystemExit("error: --emotion-model and --lexicon only work together with --mood FILE")
         if getattr(a, "person", None):
@@ -185,10 +200,24 @@ def cmd_chat(a):
     except (EMO.EmotionProblem, PER.PersonProblem) as e:
         raise SystemExit("error: %s" % e)
     params, cfg, tok = _load_model(a)
-    session = ChatSession(tok, cfg.ctx, lambda ids, **kw: sample_ids(params, cfg, ids, **kw), system=a.system, save_dir=a.save_dir,
+    system, left_out = a.system, []
+    if core and system is None:
+        count = lambda text: len(tok.encode(text, allow_special=False))
+        system, left_out = ID.system_line(core.sections, count, max(((cfg.ctx - a.max_new) // 2) - 4, 8))
+    session = ChatSession(tok, cfg.ctx, lambda ids, **kw: sample_ids(params, cfg, ids, **kw), system=system, save_dir=a.save_dir,
                           settings={"max_new": a.max_new, "temperature": a.temperature, "top_k": a.top_k},
                           memory=store, memory_tokens=a.memory_tokens, mood=mood, tagger=tagger, person=card,
-                          person_tokens=getattr(a, "person_tokens", None))
+                          person_tokens=getattr(a, "person_tokens", None), identity=core)
+    if core is not None:
+        name = getattr(a, "_version_name", None)
+        print("Identity core: %s (%s). Version: %s%s." % (core.sections["Name"], core.dir, name or "(a checkpoint typed by hand)",
+                                                          " [an OLDER version, not the current one]" if name and name != core.current else ""))
+        if left_out:
+            print("Note: the AI's window is small, so these identity sections were left out of its prompt: %s." % ", ".join(left_out))
+        if core.pending():
+            print("A protected identity change is waiting (identity pending). It does not affect this chat until applied.")
+        if core.hand_edits():
+            print("self.md was edited by hand; the official identity text is in force. Use `identity adopt` to make the edit official.")
     if store is not None:
         print("Memory file: %s (%s)" % (a.memory, store.overview().splitlines()[0]))
     if mood is not None:
@@ -196,6 +225,23 @@ def cmd_chat(a):
     if card is not None:
         print("Person card: %s" % a.person)
     run_repl(session)
+
+
+def _fill_from_core(a, core):
+    """Whatever was not typed on the command line comes from the identity core. The chosen version's checkpoint is checked against its checksum."""
+    name = a.version or (core.current if not a.ckpt else None)
+    if name:
+        core.verify_version_files(name)
+        a._version_name = name
+        if not a.ckpt:
+            a.ckpt = core.abs(core.version(name)["ckpt"])
+    elif not a.ckpt:
+        raise ID.IdentityProblem("The core has no current version yet. Register and promote one (identity add-version / record / promote), or give --ckpt.")
+    if not a.tokenizer:
+        a.tokenizer = core.resolve("tokenizer")
+    for key, attr in (("memory", "memory"), ("mood", "mood"), ("person", "person")):
+        if not getattr(a, attr, None) and core.resolve(key) and (key == "mood" or os.path.exists(core.resolve(key))):
+            setattr(a, attr, core.resolve(key))
 
 
 def cmd_memory(a):
@@ -430,6 +476,114 @@ def _person_action(a):
             print("Lines marked [auto] are only suggestions. To keep one for good delete the word [auto]; to ban it change [auto] to [no].")
 
 
+def cmd_identity(a):
+    try:
+        _identity_action(a)
+    except (ID.IdentityProblem, LIN.LineageProblem, MEM.MemoryProblem, PER.PersonProblem, EMO.EmotionProblem, OSError) as e:
+        raise SystemExit("error: %s" % e)
+
+
+def _identity_action(a):
+    """python -m persona_lm identity [--dir identity_core] <action> ... (Stage 6). Every change is typed by the owner; protected ones also need a typed confirmation."""
+    act = a.action
+    if act == "init":
+        core = ID.Core.create(a.dir, a.name, a.owner, personality=a.personality, values=a.values, temperament=a.temperament, person=a.person,
+                              memory=a.memory, mood=a.mood, tokenizer=a.tokenizer)
+        print("Made the identity core in %s." % core.dir)
+        print(core.describe(last=1))
+        print("Next: edit nothing by hand; use `identity set Personality ...` (protected: typed confirmation + cooldown) or `identity set \"Speaking style\" ...`.")
+        print("Then: identity add-version v1 --ckpt run/ckpt.npz   ->  identity make-probes   ->  identity record v1   ->  identity promote v1")
+        return
+    core = ID.Core(a.dir)
+    if act == "show":
+        print(core.describe(last=8))
+    elif act == "set":
+        print(core.propose({a.section: " ".join(a.text)}, ask=ID.keyboard_ask))
+    elif act == "adopt":
+        print(core.adopt(ask=ID.keyboard_ask))
+    elif act == "pending":
+        p = core.pending()
+        if not p:
+            print("No protected change is waiting.")
+        else:
+            print("Waiting (staged %s UTC, can be applied after %s UTC):" % (LIN.iso(p["staged_t"]), LIN.iso(p["earliest_t"])))
+            print("\n".join(ID.diff_text(s, core.sections[s], t) for s, t in p["changes"].items()))
+            print("Apply with `identity apply`, or cancel with `identity cancel`.")
+    elif act == "apply":
+        print(core.apply_pending(ask=ID.keyboard_ask))
+    elif act == "cancel":
+        print(core.cancel_pending())
+    elif act == "settings":
+        given = [(k, getattr(a, k)) for k in ("threshold", "warn_drift", "cooldown_hours") if getattr(a, k) is not None]
+        for k, v in given:
+            print(core.set_setting(k, v))
+        if not given:
+            print("\n".join("%s = %s" % (k, v) for k, v in core.settings.items()))
+    elif act == "set-file":
+        core.paths_set(a.kind, a.path)
+        print("Saved: %s file = %s" % (a.kind, core.d["paths"][a.kind]))
+    elif act == "add-version":
+        digest = core.add_version(a.name, a.ckpt, parent=a.parent, note=a.note or "")
+        print("Registered version %s (checkpoint checksum %s...). Next: identity record %s  (the first version) or identity score %s  (a new one)." % (a.name, digest[:16], a.name, a.name))
+    elif act == "versions":
+        print(core.describe(last=0))
+    elif act == "make-probes":
+        if os.path.exists(core.probes_path()):
+            raise ID.IdentityProblem("probes.json already exists. The probes are FIXED on purpose (every version is compared on the same questions). To start over, move the file away and record every baseline again.")
+        store = MEM.MemoryStore(core.resolve("memory")) if core.resolve("memory") and os.path.exists(core.resolve("memory")) else None
+        doc = ID.make_probes(core, store, max_new=a.max_new)
+        with open(core.probes_path(), "w", encoding="utf-8", newline="\n") as f:
+            json.dump(doc, f, indent=1, ensure_ascii=False)
+            f.write("\n")
+        print("Wrote %s with %d probes:" % (core.probes_path(), len(doc["probes"])))
+        for p in doc["probes"]:
+            print("  %s %-6s %s%s" % (p["id"], p["kind"], p["prompt"], "   (expects: %s)" % ", ".join(p["expect"]) if p["expect"] else ""))
+    elif act == "show-probes":
+        for p in ID.load_probes(core)["probes"]:
+            print("%s %-6s %s%s" % (p["id"], p["kind"], p["prompt"], "   (expects: %s)" % ", ".join(p["expect"]) if p["expect"] else ""))
+    elif act == "record":
+        generate, tok, ctx = ID.load_runner(core, a.name)
+        print("Asking version %s the probes (greedy, no randomness):" % a.name)
+        ID.record_answers(core, a.name, generate, tok, ctx, out=print)
+        print("Saved %s. This is now the baseline other versions are scored against." % core.answers_path(a.name))
+    elif act == "score":
+        against = a.against or core.current
+        generate, tok, ctx = ID.load_runner(core, a.name)
+        print("Asking version %s the probes:" % a.name)
+        res = ID.score_version(core, a.name, generate, tok, ctx, against=against, out=print)
+        print(ID.describe_score(a.name, against, res, core.settings["threshold"], core.settings["warn_drift"]))
+    elif act == "promote":
+        print(core.promote(a.name))
+    elif act == "rollback":
+        print(core.rollback(a.name))
+    elif act == "lineage":
+        ok, msg = core.lineage.verify()
+        print(core.lineage.describe(a.last))
+        print("Chain check: %s%s" % ("OK, " if ok else "PROBLEM: ", msg))
+    elif act == "verify":
+        results = core.verify()
+        for ok, text in results:
+            print("%s  %s" % ("OK  " if ok else "FAIL", text))
+        bad = [r for r in results if not r[0]]
+        print("\n%d check(s) passed, %d failed." % (len(results) - len(bad), len(bad)))
+        if bad:
+            sys.exit(1)
+    elif act == "distill":
+        core.version(a.teacher)
+        generate, tok, ctx = ID.load_runner(core, a.teacher)
+        prompts = []
+        if os.path.exists(core.probes_path()):
+            prompts += [p["prompt"] for p in ID.load_probes(core)["probes"]]
+        if a.prompts:
+            with open(a.prompts, encoding="utf-8") as f:
+                prompts += [l.strip() for l in f if l.strip()]
+        if a.data:
+            prompts += ID.prompts_from_data(a.data, limit=a.limit)
+        n = ID.distill(core, generate, tok, ctx, prompts, a.out, a.teacher, max_new=a.max_new, temperature=a.temperature, seed=a.seed, limit=a.limit)
+        print("Wrote %d teacher answers to %s." % (n, a.out))
+        print("Use it as extra chat-tuning data for a NEW model (same tokenizer): prepare --kind chat ... --data %s. The file contains the AI's words; keep it on this computer." % a.out)
+
+
 def cmd_status(a):
     for line in R.format_status(a.dir):
         print(line)
@@ -613,8 +767,8 @@ def build_parser():
 
     for name, fn in (("generate", cmd_generate), ("chat", cmd_chat), ("export-gguf", cmd_export)):
         s = sub.add_parser(name)
-        s.add_argument("--ckpt", required=True)
-        s.add_argument("--tokenizer", required=True)
+        s.add_argument("--ckpt", required=name != "chat", default=None)
+        s.add_argument("--tokenizer", required=name != "chat", default=None)
         if name != "export-gguf":
             s.add_argument("--max-new", type=int, default=120)
             s.add_argument("--temperature", type=float, default=0.8)
@@ -632,6 +786,8 @@ def build_parser():
             s.add_argument("--lexicon", default=None, help="JSON of extra feeling words, e.g. {\"anger\": [\"inis\"]} (needs --mood)")
             s.add_argument("--person", default=None, help="your Person card (Stage 5; made by `person init`): put into the prompt as the speaker block")
             s.add_argument("--person-tokens", type=int, default=None, help="most tokens of the window the Person card may use (default: a sixth of the window)")
+            s.add_argument("--core", default=None, help="identity core folder (Stage 6): its current version, tokenizer, self-description, Person card, memory and mood are used unless you type your own")
+            s.add_argument("--version", default=None, help="(needs --core) chat with this registered version instead of the current one")
         if name == "export-gguf":
             s.add_argument("--out", required=True)
             s.add_argument("--type", choices=["f32", "f16", "q8_0"], default="f16")
@@ -774,6 +930,48 @@ def build_parser():
     q.add_argument("--memory", default=None, help="memory.json: the people you remember")
     q.add_argument("--apply", action="store_true")
     s.set_defaults(fn=cmd_person)
+
+    s = sub.add_parser("identity", help="Stage 6: the identity core (who the AI is, outside the weights), version history, regression probes")
+    s.add_argument("--dir", default="identity_core")
+    ids = s.add_subparsers(dest="action", required=True)
+    q = ids.add_parser("init", help="make a new identity core (never overwrites)")
+    q.add_argument("--name", required=True, help="the AI's own name")
+    q.add_argument("--owner", required=True, help="your name")
+    q.add_argument("--personality", default=""); q.add_argument("--values", default=""); q.add_argument("--temperament", default="")
+    q.add_argument("--person", default=None, help="your Person card file"); q.add_argument("--memory", default=None, help="the memory file")
+    q.add_argument("--mood", default=None, help="the mood file"); q.add_argument("--tokenizer", default=None, help="the tokenizer file (it becomes the frozen one)")
+    ids.add_parser("show", help="the identity card, versions and recent history")
+    q = ids.add_parser("set", help="change one section: identity set Personality kind, curious. Protected sections need typed confirmations and a cooldown")
+    q.add_argument("section"); q.add_argument("text", nargs="+")
+    ids.add_parser("adopt", help="make a hand edit of self.md official (protected parts go through the staged process)")
+    ids.add_parser("pending", help="show a waiting protected change")
+    ids.add_parser("apply", help="apply the waiting protected change (after the cooldown, with a second typed confirmation)")
+    ids.add_parser("cancel", help="throw the waiting protected change away")
+    q = ids.add_parser("settings", help="show or change threshold / warn-drift / cooldown-hours")
+    q.add_argument("--threshold", type=float, default=None); q.add_argument("--warn-drift", dest="warn_drift", type=float, default=None)
+    q.add_argument("--cooldown-hours", dest="cooldown_hours", type=float, default=None)
+    q = ids.add_parser("set-file", help="tell the core where a file is: identity set-file memory memory.json")
+    q.add_argument("kind", choices=["person", "memory", "mood", "tokenizer"]); q.add_argument("path")
+    q = ids.add_parser("add-version", help="register a checkpoint as a version (stores its checksum)")
+    q.add_argument("name"); q.add_argument("--ckpt", required=True); q.add_argument("--parent", default=None); q.add_argument("--note", default=None)
+    ids.add_parser("versions", help="list the versions")
+    q = ids.add_parser("make-probes", help="write the fixed regression questions (once)")
+    q.add_argument("--max-new", type=int, default=60)
+    ids.add_parser("show-probes")
+    q = ids.add_parser("record", help="ask a version the probes and save its answers (the baseline)")
+    q.add_argument("name")
+    q = ids.add_parser("score", help="the regression test: ask a candidate the probes and compare with the current version's answers")
+    q.add_argument("name"); q.add_argument("--against", default=None)
+    q = ids.add_parser("promote", help="make a version current (it must have passed the test)"); q.add_argument("name")
+    q = ids.add_parser("rollback", help="go back to an older version"); q.add_argument("name")
+    q = ids.add_parser("lineage", help="the history log and a check that it was not tampered with"); q.add_argument("--last", type=int, default=20)
+    ids.add_parser("verify", help="check the log chain, self.md, and every checkpoint checksum")
+    q = ids.add_parser("distill", help="let an old version answer prompts and write them as training data for a new model")
+    q.add_argument("--teacher", required=True); q.add_argument("--out", required=True)
+    q.add_argument("--prompts", default=None, help="a text file, one prompt per line"); q.add_argument("--data", nargs="+", default=None, help="train.jsonl: use what your friends said as prompts")
+    q.add_argument("--limit", type=int, default=None); q.add_argument("--max-new", type=int, default=80)
+    q.add_argument("--temperature", type=float, default=0.7); q.add_argument("--seed", type=int, default=0)
+    s.set_defaults(fn=cmd_identity)
 
     s = sub.add_parser("check-gpu", help="check the PyTorch/GPU backend against the NumPy reference and print a report")
     s.add_argument("--device", default="auto")
