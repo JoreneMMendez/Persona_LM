@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from unittest import mock
 
 import numpy as np
 
@@ -541,8 +542,10 @@ class CommandLine(unittest.TestCase):
             os.remove(os.environ["PERSONA_SETTINGS"])
 
     def run_cli(self, *argv):
+        # Never inherit the real stdin: on Windows `< NUL` still reports isatty() == True, which made the CLI ask its questions.
         buf = io.StringIO()
-        with redirect_stdout(buf):
+        stdin = sys.stdin if isinstance(sys.stdin, FakeTerminal) else FakeTerminal(False)       # a test that set up its own terminal keeps it
+        with redirect_stdout(buf), mock.patch("sys.stdin", stdin):
             try:
                 cli_main(list(argv))
             except SystemExit as e:

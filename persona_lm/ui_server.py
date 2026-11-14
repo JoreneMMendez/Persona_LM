@@ -35,6 +35,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(HERE, "ui_static")
 DEFAULT_PORT = 8777
 MAX_BODY = 65536
+DRAIN_LIMIT = 1 << 20                     # most an unwanted request body we read (and discard) before answering
 COOKIE = "plm_session"
 TOKEN_HEADER = "X-PLM-Token"
 
@@ -182,7 +183,9 @@ class UIState:
 def make_handler(state):
     class Handler(BaseHTTPRequestHandler):
         server_version = "persona_lm_ui"
+        _body_done = False
         protocol_version = "HTTP/1.0"
+        timeout = 15                                       # a client that stalls cannot hold a thread for ever
 
         def log_message(self, *args):                      # no per-request lines: they could show paths or message texts
             pass
@@ -200,7 +203,28 @@ def make_handler(state):
             for k, v in (extra or []):
                 self.send_header(k, v)
 
+        def _drain_body(self):
+            """Read and throw away any request body the handler did not read. If we answer (403, 405, 413 ...) and close while the
+            client's body is still unread, Windows resets the connection and the client gets WinError 10053/10054 instead of our
+            answer. Reading it first lets the answer arrive. At most DRAIN_LIMIT bytes are read; a bigger claim is not our problem."""
+            if self._body_done or self.command not in ("POST", "PUT", "PATCH", "DELETE"):
+                return
+            self._body_done = True
+            try:
+                left = min(int(self.headers.get("Content-Length", "0")), DRAIN_LIMIT)
+            except ValueError:
+                return
+            try:
+                while left > 0:
+                    chunk = self.rfile.read(min(left, 16384))
+                    if not chunk:
+                        break
+                    left -= len(chunk)
+            except OSError:
+                pass
+
         def _send_bytes(self, code, body, ctype, extra=None):
+            self._drain_body()
             self.send_response(code)
             self._headers_common(ctype, len(body), extra)
             self.end_headers()
@@ -303,6 +327,7 @@ def make_handler(state):
             if n < 0 or n > MAX_BODY:
                 return self._error(413, "body too large (limit %d bytes)" % MAX_BODY)
             raw = self.rfile.read(n) if n else b"{}"
+            self._body_done = True
             try:
                 body = json.loads(raw.decode("utf-8"))
             except (ValueError, UnicodeDecodeError):
