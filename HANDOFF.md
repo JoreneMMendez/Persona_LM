@@ -2,24 +2,18 @@
 
 > **DO NOT DELETE OR REPLACE THIS FILE.** It lives at the root of the project (`persona_lm_project/HANDOFF.md`) and travels inside `persona_lm.zip`.
 > **Update it at the end of every stage** (append to the stage log in section 5, refresh sections 4, 6, 7, 12). A test (`tests/test_handoff.py`) fails if it is missing or loses its START HERE / stage-log / next-action sections.
-> Last updated: 2026-11-14, end of **Stage 3 part 1** (guided pipeline, chat screen, status/data-report; real tokenizer NOT frozen) (project moved to `C:\Users\user\persona_lm_project`, GitHub upload started); before that 2026-11-13, end of **Stage 2** (Messenger importer + anonymizer) + owner's hardware facts, language requirement and the first REAL GPU check (9/9 PASS) recorded. Give this file to the next AI **together with `persona_lm.zip`**.
+> Last updated: 2026-11-14, end of **Stage 4** (memory graph); before that Stage 3 part 1, Stage 2 (Messenger importer) and Stage 1 (GPU). Give this file to the next AI **together with `persona_lm.zip`**.
 
 ## START HERE (read this first, about 2 minutes)
 
-**State (2026-11-14).** Stage 0 audit: done. **Stage 1 GPU backend: done**, maths verified on the owner's RTX 3050 (`check-gpu` 9/9 PASS); real speed/memory not yet measured.
-**Stage 2 Messenger importer + anonymizer: done**, tested on SYNTHETIC data only (never on the owner's real export).
-**Stage 3 is HALF done ("part 1")**: everything that did not depend on the owner's answers is built and tested on tiny synthetic data: `pipeline` (init/confirm/plan/run), the chat screen with slash commands, `status`, `data-report`. **Still to do in Stage 3 ("part 2")**: choose the public pretraining corpus with the owner, freeze the REAL tokenizer (needs answers 4 and 5 below), run the real pretrain + fine-tune, and look at real replies. Stages 4-9 not started.
-Tests: 135 (133 pass + 2 PyTorch tests that run on the owner's machine). The owner's last unit-test run HUNG because of a bug in my test (fixed, see the incident in section 5); they have to re-extract the newest zip.
+**State (2026-11-14).** Stage 0 audit: done. Stage 1 GPU backend: done and measured (see section 5). Stage 2 Messenger importer + anonymizer: done (synthetic data only). Stage 3 is HALF done ("part 1": pipeline, chat screen, reports). **Stage 4 memory graph: done** (`memory.py`, `memory_export.py`, chat `/memory /remember /forget`, `memory` CLI, `docs/MEMORY_GUIDE.md`; tests on synthetic data; graph page checked in headless Chromium).
+**OWNER'S DECISION (2026-11-14): build Stages 4-9 FIRST on tiny practice models; do the real tokenizer + real pretraining/fine-tuning (Stage 3 part 2) LAST, after their Messenger export exists.** Stage 5 (emotion + Person card) is next. The owner said "next stage" to advance; do one stage per go.
+Tests: **187 (185 pass + 2 PyTorch tests that run on the owner's machine)**; the owner's run of the 135 tests of the previous zip passed (OK) on Python 3.14.
 
-**Waiting on the owner (ask for these, do not guess):**
-1. the end of `python -m unittest discover -s tests` from the fixed zip (should say `Ran 102 tests ... OK`);
-2. the output of the two `benchmark` commands in section 12 (real tokens/s and memory on the RTX 3050);
-3. their Messenger export folder (or confirmation they have not downloaded it yet), then the output of `messenger-scan` (they may blank the names);
-4. the languages they want ("any language I train it on" so far; vocab 16,000 was recommended but NOT yet explicitly accepted);
-5. an OK on `ctx=512` and the 32 reserved special tokens (defaults applied without a real answer: they said they did not understand);
-6. confirmation of the assumption "its own person, speaking in the owner's style".
+**Answered by the owner (2026-11-14):** languages = English, Tagalog, Bisaya (Cebuano), Taglish, Bisaya+Tagalog, any mix of the three (vocab 16,000 recommended, not yet frozen; Bisaya public text is scarce, Cebuano Wikipedia is partly machine-made: say so when choosing the corpus); OK on `ctx=512` and the 32 reserved special tokens (after a plain-words explanation); "its own person speaking in the owner's style" = YES; unit tests 135 OK on their PC; `benchmark` done.
+**Still waiting on the owner (later, not blocking Stages 5-9):** their Messenger export (they will export it after all stages are built) and the output of `messenger-scan`; the pretraining corpus choice. Do NOT freeze or train the real tokenizer until the Messenger data exists and they say OK (`pipeline confirm --yes`).
 
-**What you can do before they answer:** nothing more in Stage 3 part 1 (done). Part 2 needs their answers. **Do NOT freeze or train the real tokenizer** until items 4 and 5 are answered (`pipeline run --step tokenizer` refuses until `pipeline confirm --yes`; only run confirm after the owner's explicit OK). Do not start Stage 4+ before Stage 3 is accepted.
+**What you can do now:** Stage 5, then 6-9, each tested on tiny/synthetic data. **Design debt to remember:** the real fine-tune data must contain `<|memory|>` blocks (and later mood/persona blocks) or the trained model will ignore them; `messenger-import` does not produce them yet.
 
 **How to work with this owner (learned the hard way):**
 - Not an expert. Windows 11 Home, PowerShell. Laptop: Acer Aspire 7, RTX 3050 6GB, 15.7 GB RAM, Python 3.14.6, torch 2.14.1+cu130, numpy 2.5.2. The project now lives at `C:\Users\user\persona_lm_project` (moved from the Desktop on 2026-11-14; always `cd C:\Users\user\persona_lm_project` before running commands). It is being put on the owner's GitHub as a PRIVATE repo named `persona_lm` (a `.gitignore` excludes `private/`, `*.jsonl`, checkpoints, models, `data/`, `runs/`, `exports/`; never commit real Messenger data). The owner copies commands straight from the chat (markdown link syntax in a pasted command broke one: write plain URLs/paths, never `[text](url)` inside a command).
@@ -150,8 +144,13 @@ no-torch runtime must be separated), to avoid a risky refactor now. `backend.py`
 | `tests/test_stage1.py` (new) | 15 NumPy-side tests | new |
 | `tests/test_torch_backend.py` (new) | runs `selfcheck` on CPU/GPU; **skipped without PyTorch** | new |
 | `tests/test_handoff.py` (new) | 1 test, fails if this file is missing | new |
+| `memory.py` (new, Stage 4) | `MemoryStore`: memories + nodes in `memory.json` (atomic save, one backup `.prev.json`, refuses to save over a file changed by another program, change log without texts), `[[wiki-link]]` parsing, strength/fading, computed links, keyword recall (`retrieve`), maintenance plan/apply (fade, merge duplicates, extractive summaries), `parse_remember` | new; pure Python, no NumPy/PyTorch |
+| `memory_export.py` (new, Stage 4) | `export_vault` (Obsidian Markdown, never overwrites), `export_graph` (one offline HTML force-directed graph, 600-node cap, dark/light) | new |
+| `chatrepl.py` | | Stage 4: `memory=`/`memory_tokens=`, `<\|memory\|>` block after the system line (max a third of the room), `/memory /remember /forget`, "did not fit" note, recalled memories counted as used and saved |
+| `cli.py` | | Stage 4: `memory` command group (add/list/show/nodes/search/set/forget/maintain/export-vault/export-graph), `chat --memory --memory-tokens` (memory file checked before the model loads) |
+| `docs/MEMORY_GUIDE.md`, `tests/test_stage4.py` (new, Stage 4) | owner guide; 52 tests (store, file safety, recall, maintenance, exports incl. JS checks when Node exists, chat, real `chat` command, CLI) | new |
 
-Run tests: `python -m unittest discover -s tests -v` -> **135 tests: 133 pass, 2 skipped** (the 2 skipped are the PyTorch ones; with PyTorch installed they run too) in the author's sandbox, also inside a pseudo-terminal.
+Run tests: `python -m unittest discover -s tests -v` -> **187 tests: 185 pass, 2 skipped** (the 2 skipped are the PyTorch ones; with PyTorch installed they run too) in the author's sandbox, also inside a pseudo-terminal.
 
 ## 5. Stage log
 
@@ -178,7 +177,9 @@ forward logits match NumPy (max abs diff 3.58e-07); loss 4.895444 vs 4.895443; a
 stop+resume == uninterrupted run on the GPU (max abs weight diff exactly 0.00e+00, tiny model, one machine); NumPy-started run continues on torch (1.06e-05); bf16 and fp16 forward losses close to fp32 (4.9125 / 4.9126 vs 4.9126).
 This also shows the project code runs on Python 3.14. (The owner's unit-test run output had not been seen to completion when this was written; the full suite was only seen to start.)
 
-**STILL NOT TESTED after that check:** the self-check's bf16/fp16 test compares only the FORWARD loss on a tiny random model. Not yet exercised on real hardware: a real bf16 TRAINING step at s10m/s30m size (the `benchmark` command does run one), the fp16 dynamic-loss-scaling overflow/skip path,
+**MEASURED on the owner's RTX 3050 (2026-11-14, `benchmark --size s10m --vocab 16000`, bf16):** micro-batch 1/2/4/8/16 = 15,053 / 22,930 / 35,714 / 39,489 / 40,830 tokens/s, peak GPU memory 0.27 / 0.42 / 0.73 / 1.35 / 2.58 GB (raw forward+backward; real training steps are somewhat slower). 1e9 tokens ~ 6.8 h at best. `s30m` not benchmarked yet.
+
+**STILL NOT TESTED after that check (speed/memory above are now measured; the rest remains):** the self-check's bf16/fp16 test compares only the FORWARD loss on a tiny random model. Not yet exercised on real hardware: a real bf16 TRAINING step at s10m/s30m size (the `benchmark` command does run one), the fp16 dynamic-loss-scaling overflow/skip path,
 `--deterministic`, speed (tokens/s), the largest micro-batch that fits in 6 GB, cross-machine resume (local <-> Colab), and `benchmark_torch`/`train_torch` on real data. The original (pre-check) list of what was untested was: forward/gradient parity with NumPy,
 AdamW parity, fp16/bf16 behaviour and loss scaling, `train_torch` resume, NumPy->torch continuation, `benchmark_torch`, `--deterministic`. They are covered by
 `selfcheck` / `python -m persona_lm check-gpu` / `tests/test_torch_backend.py`, **which the owner must run once on the Acer Aspire 7** (and ideally on Colab) and report the output.
@@ -239,6 +240,11 @@ the two new modules contain no network imports.
 - The `[ME]` / `Person_NN` / "its own person speaking in the owner's style" question (section 6 design note) is still open; the chat screen just feeds typed text as the `user` role with an optional `--system` line.
 - Script check only covers a few scripts and cannot separate languages sharing one alphabet.
 
+### Stage 4: memory graph (done; synthetic data only)
+**What was built:** see the layout table and `docs/MEMORY_GUIDE.md`. Memory = text, time, source, emotion tag (free word), importance 0-1, nodes (person/topic/event/feeling), uses, last_used, status (active/dormant/archived/merged), pinned. Links are COMPUTED from active memories (count + summed strength), never stored. Strength = importance x 0.5^(idle days/90); using a memory resets the clock; pinned never fades. Recall: query words (rarer = heavier, stopword lists for English/Tagalog/Bisaya) + named nodes (+1) + one hop along links (+0.3), times (0.5 + strength); zero relevance is never returned; token budget skips what does not fit (never cuts a memory). Maintenance is a PLAN until `--apply`; duplicates are only compared inside the same node set (>=80% same words, >=3 words); summaries are EXTRACTIVE (first sentences of the top-3 memories of a node with >=6 unpinned memories older than 30 days), originals become `archived`, nothing is deleted except by the owner's `forget` (which also deletes the backup copy). Only typed commands change memory; model text never does.
+**Tested (author's sandbox, Python 3.12, NumPy 2.5):** 52 new tests (187 total, also inside a pseudo-terminal, also with `-W error::ResourceWarning` for the new file); mutation checks: breaking each of forget-backup removal, conflict detection, zero-relevance filter, pinned fading, the one-third budget cap, forged special tokens, cross-node duplicate merging makes at least one test fail. The graph page was opened in headless Chromium (no page errors, light and dark, 600 nodes ~39 fps in software rendering); `node --check` and a layout stress test run inside the unit suite when Node is installed. End-to-end `chat --memory` was run with a real tiny checkpoint.
+**NOT tested / limitations:** never run with the owner's real memories, real model, Windows, or their browser/Obsidian (vault checked only structurally: every wiki-link has a note, file names are Windows-safe). Recall is by words, not meaning (no embeddings): "what fruit" will not find "mango". The model has never been trained with `<|memory|>` blocks, so it cannot yet use them (see Design debt). If a save fails with a conflict the in-RAM store has the change but the file does not; restart the chat. Names in `[[ ]]` are limited to 60 characters; nodes have no relationship types (write the relationship as a memory). The memory file is plain text: the chat does not encrypt it.
+
 ## 6. Decisions
 
 **Made by the owner:**
@@ -269,7 +275,7 @@ At chat time the other side is the OWNER talking to an AI that is "its own perso
 (the AI's own name and self-description, "you speak in <owner>'s style and you are talking to <owner>"), possibly with a distillation/rewrite step; the `<|persona|>`, `<|memory|>`, `<|mood|>`, `<|speaker|>` reserved tokens exist for this.
 Decide how `[ME]` and `Person_NN` are shown/replaced at chat time (e.g. `[ME]` -> the owner's chosen display name inside the prompt).
 
-**Still open:** the owner's Messenger export size and number of chats (the PowerShell command was run with a placeholder path: `C:\path\to\unzipped\export`, so no numbers yet); the **list of languages** (and OK for vocab 16,000; "recommended" = yes);
+**Still open (updated 2026-11-14: languages, ctx/specials OK and persona assumption are now ANSWERED, see START HERE):** the owner's Messenger export size and number of chats (the PowerShell command was run with a placeholder path: `C:\path\to\unzipped\export`, so no numbers yet); the **list of languages** (and OK for vocab 16,000; "recommended" = yes);
 confirmation of the "own person in the owner's speaking style" assumption; result of `check-gpu` and of the unit tests on the owner's Python 3.14; OK for `ctx=512` + 32 reserved tokens.
 
 ## 7. Milestone plan and status
@@ -279,8 +285,8 @@ confirmation of the "own person in the owner's speaking style" assumption; resul
 | 0 | Audit | done |
 | 1 | GPU backend | **done: check-gpu 9/9 PASS on RTX 3050; real speed/memory (benchmark) and a real training run still to be measured** |
 | 2 | Messenger importer + anonymizer | **done (synthetic data only; owner should run `messenger-scan` on the real export)** |
-| 3 | Train/chat CLI, pretrain-then-finetune flow (train the real tokenizer here) | **part 1 done** (pipeline, chat screen, status, data-report; tiny synthetic data). **Part 2 waiting on the owner**: languages, ctx/specials OK, pretraining corpus, then freeze the real tokenizer and run real training |
-| 4 | Memory graph (store, retrieval, decay/merge/summarize, Obsidian export, HTML graph) | |
+| 3 | Train/chat CLI, pretrain-then-finetune flow (train the real tokenizer here; **owner chose to do part 2 LAST, after Stages 4-9 and the Messenger export**) | **part 1 done** (pipeline, chat screen, status, data-report; tiny synthetic data). **Part 2 waiting on the owner**: languages, ctx/specials OK, pretraining corpus, then freeze the real tokenizer and run real training |
+| 4 | Memory graph (store, retrieval, decay/merge/summarize, Obsidian export, HTML graph) | **done** (synthetic data; real fine-tune must include memory blocks) |
 | 5 | Emotion + Person card | |
 | 6 | Identity core + lineage + regression tests (probes, scoring, drift, protected tier, distillation, checksums) | |
 | 7 | Self-modification (proposals, diffs, undo, TTY-only approval) | |
@@ -332,10 +338,7 @@ print(p.returncode, p.stdout.decode()[-200:])      # a TimeoutExpired here means
 
 ## 12. Next action
 
-0. The owner re-extracts the newest zip (project folder `C:\Users\user\persona_lm_project`; the previous unit-test run hung because of a since-fixed test bug). Quick proof without waiting on the keyboard: `cmd /c "python -m unittest discover -s tests < NUL"` (expect `Ran 135 tests ... OK (skipped=...)`; with PyTorch the 2 skipped ones run).
-1. Ask the owner for (do not guess): (a) the end of the unit-test run; (b) `python -m persona_lm benchmark --size s10m --vocab 16000 --try-batches 1,2,4,8,16,32` and the same for `s30m`;
-   (c) their Messenger export folder (`Get-ChildItem "$env:USERPROFILE\Downloads","$env:USERPROFILE\Desktop","$env:USERPROFILE\Documents" -Recurse -Filter message_1.json -ErrorAction SilentlyContinue | Select-Object -First 3 FullName`; nothing found = not downloaded yet: docs/MESSENGER_GUIDE.md section 1), then `messenger-scan`;
-   (d) the languages; (e) OK on `ctx=512` and the 32 reserved tokens (explain in plain words first); (f) confirmation of "its own person, speaking in the owner's style".
-2. **Stage 3 part 2** once (c)-(e) are answered: help choose public text in the owner's languages (they must download it; the sandbox has no network and PyTorch/large downloads are painful for them); `messenger-import` -> `pipeline init` -> `pipeline plan` (read the script warnings with them) -> `pipeline confirm --yes` ONLY after their explicit OK -> `pipeline run` one step at a time, checking `data-report` before each training step and `status` after; look at real replies; consider the `ckpt.best.npz` idea (see Stage 3 limitations).
-   Stage 3 is accepted only when the owner says so; then start Stage 4 (memory graph).
-3. If the benchmark/unit tests expose problems in `torch_backend.py` (fp16 loss scaling, memory), fix them before relying on long runs.
+1. The owner re-extracts the newest zip, then runs `cmd /c "python -m unittest discover -s tests < NUL"` (expect `Ran 187 tests ... OK (skipped=...)`) and tries `python -m persona_lm memory add "[[person:Maria]] is my sister"` followed by `memory export-graph memory_graph.html` (see docs/MEMORY_GUIDE.md); ask what looked wrong.
+2. **Stage 5: emotion + Person card** when the owner says "next" (one stage per go). Use the memory store's `emotion` tag and the reserved `<|mood|>` token; the emotion tagger starts from weak heuristic labels (say so); the Person card is a plain editable file built from the owner's data; changes to it must stay owner-confirmed (Stage 7 formalises approvals). Remember: tests must not read the real stdin; run the suite in a pseudo-terminal before delivery (section 11).
+3. Stages 6-9 as in section 7. **Stage 3 part 2 (real tokenizer, pretraining, fine-tune) is deliberately last**: it needs the owner's Messenger export, a pretraining corpus (English/Tagalog/Bisaya) and their explicit OK; include memory/persona/mood blocks in the fine-tune examples.
+4. Still open from earlier: `s30m` benchmark, cross-machine resume, GGUF loading in llama.cpp, fp16 loss-scaling path (section 5 Stage 1).

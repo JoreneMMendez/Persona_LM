@@ -56,6 +56,17 @@ python -m persona_lm status work
 ```
 The chat screen has slash commands (`/help /reset /history /save /system /temp /max /quit`; `/memory /mood /identity /approve /reject` are placeholders for later stages).
 
+## Long-term memory (Stage 4; see docs/MEMORY_GUIDE.md)
+```bash
+python -m persona_lm memory add "[[person:Maria]] is my sister #love *0.9 !pin"
+python -m persona_lm memory search what does Maria like
+python -m persona_lm memory maintain            # a plan; add --apply to do it
+python -m persona_lm memory export-vault vault  # Obsidian folder with [[wiki-links]]
+python -m persona_lm memory export-graph memory_graph.html
+python -m persona_lm chat --ckpt runs/chat/ckpt.npz --tokenizer tok.json --memory memory.json
+```
+Memories live in `memory.json` outside the model. Only typed commands change them. Recall is by words and names, not meaning. Tested on synthetic data only.
+
 ## GPU training (Stage 1; see docs/GPU_GUIDE.md)
 ```bash
 python -m persona_lm check-gpu                       # does the GPU code match the NumPy reference on this machine?
@@ -76,7 +87,7 @@ python -m persona_lm train ... --backend auto --device auto --precision auto --b
 A crash or power cut loses at most `--ckpt-every` steps (default 100) or `--ckpt-minutes` (default 10).
 
 ## Tests
-`python -m unittest discover -s tests -v`  (102 tests, about one second; 2 of them need PyTorch and are skipped without it). They check, among other things:
+`python -m unittest discover -s tests -v`  (187 tests, a few seconds; 2 of them need PyTorch and are skipped without it). They check, among other things:
 the gradients against finite differences (and that the check catches deliberately injected bugs), that loss falls,
 that stop-and-resume gives bit-identical weights, tokenizer round trips, and that the GGUF file reads back.
 
@@ -91,4 +102,4 @@ that stop-and-resume gives bit-identical weights, tokenizer round trips, and tha
   load `aria.gguf` with `llama-cli`, and compare `llama-tokenize` output against `Tokenizer.encode` on a sentence.
   If either differs, tell me the exact output and I will fix the writer. Q4_K_M: run llama.cpp's `llama-quantize` on the f16 file.
 - Text generation recomputes the window each token (no KV cache). Fine for testing; slow for long replies.
-- Not in this package yet: memory graph, Person card, mood, identity core, self-modification, personas, export package. See `HANDOFF.md` for the plan and status.
+- Not in this package yet: Person card, mood, identity core, self-modification, personas, export package. See `HANDOFF.md` for the plan and status.

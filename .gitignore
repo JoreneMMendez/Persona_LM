@@ -10,3 +10,11 @@ __pycache__/
 data/
 runs/
 exports/
+memory.json
+memory.prev.json
+memory.log.jsonl
+memory.json.tmp
+*.log.jsonl
+vault/
+memory_graph.html
+memory/

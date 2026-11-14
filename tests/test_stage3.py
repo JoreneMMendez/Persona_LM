@@ -182,7 +182,7 @@ class ChatTests(Base):
         s = self.session()
         s.handle("hello")
         before = list(s.history)
-        for cmd, stage in (("/memory", 4), ("/mood", 5), ("/identity", 6), ("/approve", 7), ("/reject", 7)):
+        for cmd, stage in (("/mood", 5), ("/identity", 6), ("/approve", 7), ("/reject", 7)):
             text, quit_ = s.handle(cmd)
             self.assertIn("Stage %d" % stage, text)
             self.assertIn("Nothing was changed", text)
@@ -268,12 +268,12 @@ class ChatTests(Base):
 
     def test_repl_loop_with_scripted_typing(self):
         s = self.session()
-        typed = iter(["hello", "/memory", "", "/quit", "never reached"])
+        typed = iter(["hello", "/mood", "", "/quit", "never reached"])
         shown = []
         chatrepl.run_repl(s, input_fn=lambda prompt: next(typed), out=shown.append)
         text = "\n".join(shown)
         self.assertIn("ai> sure thing", text)
-        self.assertIn("Stage 4", text)
+        self.assertIn("Stage 5", text)
         self.assertEqual(len(self.gen.calls), 1)
 
     def test_repl_ends_cleanly_on_end_of_input(self):

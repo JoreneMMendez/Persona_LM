@@ -3,17 +3,20 @@
 Design rules (they matter for Stage 7, when the AI may PROPOSE changes):
   * Commands are read ONLY from what the person types. The model's replies are never looked at for commands, so nothing the AI
     writes (or anything in its training data) can run /approve, /reject or any other command.
-  * /memory /mood /identity /approve /reject exist already but are honest stubs: they say which stage builds them and change nothing.
+  * /mood /identity /approve /reject exist already but are honest stubs: they say which stage builds them and change nothing.
+  * /memory /remember /forget (Stage 4) work only when the chat was started with a memory file (--memory). Memories are added or removed only
+    by these typed commands; the AI's own words never reach the memory file. Recalled memories are put into the prompt after the system
+    line as one block  <|memory|> - fact - fact <|end|>  and cost part of the window.
   * The class does no keyboard reading itself (`handle(line)` takes a string), so tests never wait for a keyboard.
 """
 import os
 import time
 
-from .bpe import ASSISTANT, END, ROLE_ID
+from .bpe import ASSISTANT, END, MEMORY, ROLE_ID
+from .memory import MemoryConflict, MemoryProblem, parse_remember
 
 # command -> (stage that builds it, what it will do)
 PLANNED = {
-    "/memory":   (4, "show what the AI remembers (people, topics, events) and why"),
     "/mood":     (5, "show the AI's current emotional state"),
     "/identity": (6, "show the AI's identity card (name, personality, values) and its version history"),
     "/approve":  (7, "approve a change the AI has PROPOSED to its memory, settings or training"),
@@ -24,19 +27,23 @@ HELP = """Commands (type them at the  you>  prompt):
   /help             this list
   /reset            forget the conversation and start again
   /history          show the conversation so far
+  /memory           (needs --memory) what the AI remembers; /memory search <words> shows what it would recall for those words
+  /remember <text>  (needs --memory) remember something, e.g.  /remember [[person:Maria]] is my sister #love *0.9 !pin
+                    ([[Name]] or [[kind:Name]] makes a node; #emotion, *importance 0-1 and !pin go at the END)
+  /forget <id>      (needs --memory) delete one memory for good, e.g. /forget m0003
   /save [file]      write the conversation to a text file on this computer (never overwrites)
   /system <text>    set the system line (how the AI is introduced to itself) and start again
   /temp <0-2>       randomness of the replies (0 = always the most likely word, 0.8 = default)
   /max <n>          longest reply in tokens
   /quit             leave
   //text            send a message that starts with a slash, e.g. //shrug
-Not built yet (they only explain what they will do): /memory /mood /identity /approve /reject"""
+Not built yet (they only explain what they will do): /mood /identity /approve /reject"""
 
 
 class ChatSession:
     """One conversation. generate(prompt_ids, seed=..., max_new=..., temperature=..., top_k=...) -> list of new token ids."""
 
-    def __init__(self, tok, ctx, generate, system=None, save_dir=".", settings=None, seed=0, clock=time.time):
+    def __init__(self, tok, ctx, generate, system=None, save_dir=".", settings=None, seed=0, clock=time.time, memory=None, memory_tokens=None):
         self.tok, self.ctx, self.generate = tok, ctx, generate
         self.system = system
         self.save_dir = save_dir
@@ -48,6 +55,10 @@ class ChatSession:
         self.history = []                       # [(role, text)], the whole conversation (the model only sees the newest part that fits)
         self.last_dropped = 0
         self._told_about_window = False
+        self.memory = memory                    # a MemoryStore, or None (memory switched off)
+        self.memory_tokens = memory_tokens if memory_tokens is not None else max(16, ctx // 5)
+        self.last_recalled = []                 # memory ids put into the newest prompt
+        self.last_unfit = 0                     # how many matching memories were left out because they did not fit the budget
 
     # ------------------------------------------------------------ what the model sees
     def _message_ids(self, role, text):
@@ -56,13 +67,31 @@ class ChatSession:
     def prompt_budget(self):
         return max(self.ctx - self.settings["max_new"], self.ctx // 2)
 
+    def _memory_block(self, room):
+        """<|memory|> - fact - fact <|end|> for the memories that fit the newest user message, or [] (also sets self.last_recalled).
+        It never takes more than a third of the room left after the system line, so the conversation itself still fits."""
+        self.last_recalled, self.last_unfit = [], 0
+        if self.memory is None or not self.history:
+            return []
+        cap = min(self.memory_tokens, room // 3) - 2                       # 2 = the <|memory|> and <|end|> markers
+        query = " ".join(t for r, t in self.history[-3:] if r == "user")      # the last user message(s): what the person is talking about now
+        found = self.memory.retrieve(query, k=6, budget_tokens=max(cap, 0), count_tokens=lambda line: len(self.tok.encode(line + "\n", allow_special=False)),
+                                     now=self.clock()) if cap > 0 else []
+        if not found:
+            self.last_unfit = len(self.memory.retrieve(query, k=6, now=self.clock()))     # matches that exist but did not fit
+            return []
+        self.last_recalled = [m["id"] for m, _, _ in found]
+        text = "\n".join(self.memory.line_for_prompt(m) for m, _, _ in found)
+        return [MEMORY] + self.tok.encode(text, allow_special=False) + [END]
+
     def build_prompt(self):
         """System line first, then as many of the NEWEST whole messages as fit. Returns (ids, dropped_message_count) or (None, reason)."""
         budget = self.prompt_budget() - 1                             # 1 = the final "assistant" marker
         system_ids = self._message_ids("system", self.system) if self.system else []
         if len(system_ids) > budget // 2:
             return None, "The system line is too long (%d tokens; at most %d)." % (len(system_ids), budget // 2)
-        room = budget - len(system_ids)
+        memory_ids = self._memory_block(budget - len(system_ids))
+        room = budget - len(system_ids) - len(memory_ids)
         keep = []
         for role, text in reversed(self.history):
             ids = self._message_ids(role, text)
@@ -74,7 +103,7 @@ class ChatSession:
             last = self._message_ids(*self.history[-1])
             return None, "That message is too long for the model's window (%d tokens; at most %d). Send something shorter." % (len(last), budget - len(system_ids))
         dropped = len(self.history) - len(keep)
-        ids = list(system_ids)
+        ids = list(system_ids) + memory_ids
         for m in reversed(keep):
             ids += m
         return ids + [ASSISTANT], dropped
@@ -105,6 +134,17 @@ class ChatSession:
             return "(the model produced an empty reply: just send your message again, or try /temp 1.0)"
         self.history.append(("assistant", reply))
         out = "ai> " + reply
+        if self.last_unfit and not self.last_recalled:
+            out += "\n(note: %d memor%s matched but did not fit in the memory budget of %d tokens, so the AI did not see %s. " \
+                   "A bigger window or --memory-tokens helps.)" % (self.last_unfit, "y" if self.last_unfit == 1 else "ies", self.memory_tokens,
+                                                                   "it" if self.last_unfit == 1 else "them")
+        if self.last_recalled:
+            out += "\n(recalled: %s; /memory shows them)" % ", ".join(self.last_recalled)
+            self.memory.touch(self.last_recalled, now=self.clock())
+            try:
+                self.memory.save()
+            except (MemoryConflict, OSError) as e:
+                out += "\n(could not save the memory file: %s)" % e
         if info and not self._told_about_window:
             self._told_about_window = True
             out += "\n(note: the AI's window is %d tokens, so it no longer sees the oldest %d message(s) of this conversation. /history still shows everything.)" % (self.ctx, info)
@@ -153,6 +193,8 @@ class ChatSession:
             return "longest reply = %d tokens" % v, False
         if name == "/save":
             return self.save(arg), False
+        if name in ("/memory", "/remember", "/forget"):
+            return self.memory_command(name, arg), False
         if name in PLANNED:
             stage, what = PLANNED[name]
             msg = "%s is not built yet. It is planned for Stage %d: it will %s. Nothing was changed." % (name, stage, what)
@@ -160,6 +202,45 @@ class ChatSession:
                 msg += " (When it exists, approvals will be read only from your keyboard, never from anything the AI writes.)"
             return msg, False
         return "Unknown command %s. Type /help. (To send a message that starts with a slash, start it with two slashes.)" % name, False
+
+    def memory_command(self, name, arg):
+        if self.memory is None:
+            return "Memory is not switched on for this chat. Start it with:  python -m persona_lm chat ... --memory memory.json"
+        try:
+            if name == "/remember":
+                if not arg:
+                    return "Usage: /remember <text>   e.g. /remember [[person:Maria]] is my sister #love *0.9 !pin"
+                text, opts = parse_remember(arg)
+                mem = self.memory.add(text, **opts)
+                self.memory.log("add", [mem["id"]])
+                self.memory.save()
+                return "Remembered as %s. %s" % (mem["id"], self.memory.format_memory(mem, self.clock()))
+            if name == "/forget":
+                if not arg:
+                    return "Usage: /forget <id>   e.g. /forget m0003 (see ids with /memory search <words>)"
+                mid = self.memory.forget(arg)
+                self.memory.log("forget", [mid])
+                self.memory.save(keep_backup=False)
+                return "Forgot %s for good." % mid
+            # /memory and /memory search <words>
+            sub, _, rest = arg.partition(" ")
+            if sub.lower() == "search":
+                if not rest.strip():
+                    return "Usage: /memory search <words>"
+                found = self.memory.retrieve(rest, k=8, now=self.clock())
+                if not found:
+                    return "Nothing in memory matches those words."
+                return "\n".join("%s   (score %.2f: %s)" % (self.memory.format_memory(m, self.clock()), sc, why) for m, sc, why in found)
+            lines = [self.memory.overview(self.clock())]
+            if self.last_recalled:
+                lines.append("Used in the last reply:")
+                lines += ["  " + self.memory.format_memory(self.memory.memories[i], self.clock()) for i in self.last_recalled if i in self.memory.memories]
+            lines.append("(/memory search <words>, /remember <text>, /forget <id>)")
+            return "\n".join(lines)
+        except MemoryConflict as e:
+            return "Not saved: %s" % e
+        except MemoryProblem as e:
+            return str(e)
 
     def save(self, arg):
         if not self.history:

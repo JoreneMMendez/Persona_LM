@@ -16,6 +16,8 @@ from .ckpt import load_ckpt
 from . import pipeline as PL
 from . import report as R
 from .chatrepl import ChatSession, run_repl
+from . import memory as MEM
+from . import memory_export as MEX
 from .generate import complete, sample_ids
 from .gguf import export_model, params_from_gguf, read_gguf
 from .model import PRESETS, Config, forward, init_params, loss_and_grads, preset, zero_grads
@@ -160,10 +162,115 @@ def cmd_generate(a):
 
 
 def cmd_chat(a):
+    store = None
+    if a.memory:                                        # checked BEFORE the (slow) model load, so a broken memory file fails at once
+        try:
+            store = MEM.MemoryStore(a.memory)
+        except MEM.MemoryProblem as e:
+            raise SystemExit("error: %s" % e)
     params, cfg, tok = _load_model(a)
     session = ChatSession(tok, cfg.ctx, lambda ids, **kw: sample_ids(params, cfg, ids, **kw), system=a.system, save_dir=a.save_dir,
-                          settings={"max_new": a.max_new, "temperature": a.temperature, "top_k": a.top_k})
+                          settings={"max_new": a.max_new, "temperature": a.temperature, "top_k": a.top_k},
+                          memory=store, memory_tokens=a.memory_tokens)
+    if store is not None:
+        print("Memory file: %s (%s)" % (a.memory, store.overview().splitlines()[0]))
     run_repl(session)
+
+
+def cmd_memory(a):
+    """python -m persona_lm memory [--file memory.json] <action> ... : the long-term memory graph (Stage 4). Local files only."""
+    try:
+        _memory_action(a)
+    except (MEM.MemoryProblem, ValueError) as e:
+        raise SystemExit("error: %s" % e)
+
+
+def _memory_action(a):
+    store = MEM.MemoryStore(a.file)
+    act = a.action
+    if act == "add":
+        text, opts = MEM.parse_remember(" ".join(a.text))
+        for k, v in (("emotion", a.emotion), ("importance", a.importance)):
+            if v is not None:
+                opts[k] = v
+        if a.pin:
+            opts["pinned"] = True
+        if a.when:
+            opts["when"] = a.when
+        mem = store.add(text, **opts)
+        store.log("add", [mem["id"]])
+        store.save()
+        print("Remembered. " + store.format_memory(mem))
+    elif act == "list":
+        mems = sorted(store.memories.values(), key=lambda m: (m["timestamp"], m["id"]))
+        if a.node:
+            node = store.find_node(a.node)
+            if not node:
+                raise MEM.MemoryProblem("There is no node called %r. See: python -m persona_lm memory nodes" % a.node)
+            mems = [m for m in mems if node["id"] in m["nodes"]]
+        if a.status != "all":
+            mems = [m for m in mems if m["status"] == a.status]
+        for m in mems[-a.limit:]:
+            print(store.format_memory(m))
+        print("(%d shown of %d matching)" % (min(len(mems), a.limit), len(mems)))
+    elif act == "show":
+        print(store.format_memory(store.get(a.id)))
+    elif act == "nodes":
+        scores = store.node_scores()
+        for n in sorted(store.nodes.values(), key=lambda n: (-scores[n["id"]], n["id"])):
+            count = sum(1 for m in store.active() if n["id"] in m["nodes"])
+            print("%-9s %-30s size %.2f  %d active memor%s" % (n["kind"], n["name"], scores[n["id"]], count, "y" if count == 1 else "ies"))
+        print(store.overview())
+    elif act == "search":
+        found = store.retrieve(" ".join(a.query), k=a.k)
+        for m, sc, why in found:
+            print("%s   (score %.2f: %s)" % (store.format_memory(m), sc, why))
+        if not found:
+            print("Nothing in memory matches those words (matching is by words and names, not by meaning).")
+    elif act == "set":
+        if a.importance is None and not (a.pin or a.unpin):
+            raise MEM.MemoryProblem("Give --importance and/or --pin / --unpin.")
+        mem = store.get(a.id)
+        store.set_importance(mem["id"], mem["importance"] if a.importance is None else a.importance, True if a.pin else False if a.unpin else None)
+        store.log("set", [mem["id"]])
+        store.save()
+        print(store.format_memory(mem))
+    elif act == "forget":
+        mem = store.get(a.id)
+        if not a.yes:
+            print("This would delete for good:\n  " + store.format_memory(mem) + "\nRun again with --yes to do it.")
+            return
+        store.forget(mem["id"])
+        store.log("forget", [mem["id"]])
+        store.save(keep_backup=False)
+        print("Forgot %s for good (the backup copy was removed too)." % mem["id"])
+    elif act == "maintain":
+        plan = store.plan_maintenance(half_life=a.half_life, dormant_below=a.dormant_below, dup_threshold=a.dup_threshold, cluster_min=a.cluster_min)
+        print("Maintenance plan (nothing changes unless you add --apply):")
+        print("  fade to dormant : %s" % (", ".join(plan["fade"]) or "none"))
+        print("  bring back      : %s" % (", ".join(plan["revive"]) or "none"))
+        print("  duplicates      : %s" % (", ".join("%s absorbs %s (%.0f%% same words)" % (k, d, 100 * sim) for k, d, sim in plan["duplicates"]) or "none"))
+        for s in plan["summaries"]:
+            print("  summary of %d memories about %s:\n      %s" % (len(s["ids"]), store.nodes[s["node"]]["name"], s["text"]))
+        if not plan["summaries"]:
+            print("  summaries       : none")
+        print("(Summaries are EXTRACTIVE: they copy the first sentences of the most important memories. They are not written by the AI.)")
+        if a.apply:
+            if not any(plan[k] for k in plan):
+                print("Nothing to apply.")
+                return
+            done = store.apply_maintenance(plan)
+            store.log("maintain", [], note=json.dumps(done))
+            store.save()
+            print("Applied: %s. (Previous version kept as %s)" % (json.dumps(done), store._backup_path()))
+    elif act == "export-vault":
+        print("Warning: the vault contains your personal memories as plain text. Keep it on this computer.")
+        r = MEX.export_vault(store, a.out)
+        print("Wrote %d memories and %d nodes to %s. Open that folder as a vault in Obsidian." % (r["memories"], r["nodes"], r["folder"]))
+    elif act == "export-graph":
+        print("Warning: the graph page contains your personal memories as plain text. Keep it on this computer.")
+        r = MEX.export_graph(store, a.out)
+        print("Wrote %s (%d nodes, %d links). Open it by double-clicking; no internet needed." % (r["file"], r["nodes"], r["edges"]))
 
 
 def cmd_status(a):
@@ -361,6 +468,8 @@ def build_parser():
         if name == "chat":
             s.add_argument("--system", default=None)
             s.add_argument("--save-dir", default=".", help="where /save writes conversations (this computer only)")
+            s.add_argument("--memory", default=None, help="memory file (Stage 4): turns on /memory /remember /forget and recall into the prompt")
+            s.add_argument("--memory-tokens", type=int, default=None, help="most tokens of the window that recalled memories may use (default: a fifth of the window)")
         if name == "export-gguf":
             s.add_argument("--out", required=True)
             s.add_argument("--type", choices=["f32", "f16", "q8_0"], default="f16")
@@ -417,6 +526,40 @@ def build_parser():
     q.add_argument("--dir", required=True)
     q.add_argument("--step", default="next", choices=["next"] + PL.STEP_ORDER)
     s.set_defaults(fn=cmd_pipeline)
+
+    s = sub.add_parser("memory", help="the long-term memory graph (Stage 4): add, search, list, forget, maintain, export")
+    s.add_argument("--file", default="memory.json", help="the memory file (default memory.json in the current folder)")
+    ms = s.add_subparsers(dest="action", required=True)
+    q = ms.add_parser("add", help="remember something: [[Name]] or [[kind:Name]] makes a node; #emotion *0.8 !pin at the end are options")
+    q.add_argument("text", nargs="+")
+    q.add_argument("--emotion", default=None)
+    q.add_argument("--importance", type=float, default=None, help="0 to 1 (default 0.5)")
+    q.add_argument("--pin", action="store_true", help="never fades")
+    q.add_argument("--when", default=None, help="when it happened: 2026-11-14 or 2026-11-14T10:30:00Z (default now)")
+    q = ms.add_parser("list", help="list memories, oldest first")
+    q.add_argument("--node", default=None)
+    q.add_argument("--status", default="active", choices=list(MEM.STATUSES) + ["all"])
+    q.add_argument("--limit", type=int, default=30)
+    q = ms.add_parser("show"); q.add_argument("id")
+    ms.add_parser("nodes", help="people, topics, events, feelings with their size")
+    q = ms.add_parser("search", help="what would be recalled for these words (changes nothing)")
+    q.add_argument("query", nargs="+"); q.add_argument("-k", type=int, default=8)
+    q = ms.add_parser("set", help="change a memory's importance or pin it")
+    q.add_argument("id"); q.add_argument("--importance", type=float, default=None)
+    q.add_argument("--pin", action="store_true"); q.add_argument("--unpin", action="store_true")
+    q = ms.add_parser("forget", help="delete one memory for good (shows it first; needs --yes)")
+    q.add_argument("id"); q.add_argument("--yes", action="store_true")
+    q = ms.add_parser("maintain", help="show a plan: fade old memories, merge duplicates, summarise big clusters. --apply does it")
+    q.add_argument("--apply", action="store_true")
+    q.add_argument("--half-life", type=float, default=MEM.HALF_LIFE_DAYS, help="days until an unused memory's strength halves (default 90)")
+    q.add_argument("--dormant-below", type=float, default=MEM.DORMANT_BELOW)
+    q.add_argument("--dup-threshold", type=float, default=0.8, help="share of the same words that counts as a duplicate (default 0.8)")
+    q.add_argument("--cluster-min", type=int, default=6, help="memories about one node before a summary is proposed (default 6)")
+    q = ms.add_parser("export-vault", help="Obsidian folder with [[wiki-links]] (a new empty folder; nothing is overwritten)")
+    q.add_argument("out")
+    q = ms.add_parser("export-graph", help="one HTML file with the force-directed graph (needs no internet)")
+    q.add_argument("out")
+    s.set_defaults(fn=cmd_memory)
 
     s = sub.add_parser("check-gpu", help="check the PyTorch/GPU backend against the NumPy reference and print a report")
     s.add_argument("--device", default="auto")
