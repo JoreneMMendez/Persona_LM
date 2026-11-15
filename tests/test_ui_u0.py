@@ -188,9 +188,9 @@ class ApiAuth(Base):
         st, _, body = self.api("GET", "/api/health")
         self.assertEqual((st, json.loads(body)), (200, {"ok": True}))
         info = json.loads(self.api("GET", "/api/info")[2])
-        self.assertEqual(info["stage"], "U5b")
+        self.assertEqual(info["stage"], "U8")
         ids = [s["id"] for s in info["sections"]]
-        for need in ("chat", "memory", "mood", "prompt", "data", "training", "identity", "proposals", "models", "export", "settings"):
+        for need in ("chat", "memory", "mood", "prompt", "data", "corpus", "training", "identity", "proposals", "models", "export", "settings"):
             self.assertIn(need, ids)
 
     def test_unknown_routes(self):
@@ -317,7 +317,8 @@ class SafetyDesign(Base):
     def test_route_table_has_no_dangerous_names(self):
         self.assertEqual(UI.ROUTES["POST"], ["/api/ping", "/api/chat/count", "/api/chat/load", "/api/chat/reset", "/api/chat/save", "/api/chat/send", "/api/chat/settings", "/api/chat/stop",
                                            "/api/personas/use", "/api/memory/add", "/api/memory/edit", "/api/memory/forget", "/api/memory/maintain",
-                                           "/api/person/add", "/api/person/edit", "/api/person/remove", "/api/data/clean-apply", "/api/train/start", "/api/train/stop"])
+                                           "/api/person/add", "/api/person/edit", "/api/person/remove", "/api/data/clean-apply", "/api/train/start", "/api/train/stop",
+                                           "/api/corpus/start", "/api/corpus/stop"])           # U8: see test_ui_corpus.py
         for method, paths in UI.ROUTES.items():
             for p in paths:
                 if p.startswith("/api/") and p not in self.CHAT and p not in self.MEMORY and p not in self.PERSONA and p not in self.DATA and p not in self.TRAIN:

@@ -1,4 +1,4 @@
-// PersonaLM UI (stages U0 to U2a): shell, theme, toasts, shortcuts, Settings/Privacy page, design kit.
+// PersonaLM UI (stages U0 to U8): shell, theme, toasts, shortcuts, Settings/Privacy page, design kit.
 // Everything is built with textContent / createElement (no innerHTML with data), and nothing is loaded from outside this server.
 
 import { chatPage } from './chat.js';
@@ -7,6 +7,7 @@ import { moodPage } from './mind.js';
 import { personasPage } from './personas.js';
 import { dataPage } from './data.js';
 import { trainingPage } from './training.js';
+import { corpusPage } from './corpus.js';
 
 const TOKEN = document.querySelector('meta[name="plm-token"]').content;
 
@@ -35,6 +36,7 @@ const ICONS = { // static, trusted strings (24x24 stroke icons)
   inbox: 'M3 13l3-8h12l3 8v6H3v-6zM3 13h5l1 3h6l1-3h5',
   compare: 'M9 4v16M15 4v16M4 8h5M15 16h5',
   box: 'M3 7l9-4 9 4v10l-9 4-9-4V7zM3 7l9 4 9-4M12 11v10',
+  download: 'M12 3v12M7 10l5 5 5-5M4 20h16',
   lock: 'M6 11V8a6 6 0 0 1 12 0v3M5 11h14v10H5V11z',
   menu: 'M4 7h16M4 12h16M4 17h16',
   sun: 'M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4',
@@ -95,6 +97,7 @@ const PLANNED = {
   mood: ['View and edit the mood and the Person card, with a mood history chart.', 'python -m persona_lm mood show'],
   prompt: ['See which memories and old-chat lines went into the prompt, and switch personas.', 'python -m persona_lm persona list'],
   data: ['Messenger scan and import wizard, the chat cleaner with a before/after report, duplicate report and privacy audit.', 'python clean_chat.py --input FILE'],
+  corpus: ['Download English, Tagalog, Cebuano and Taglish public text, clean it and check it.', 'python -m persona_lm corpus'],
   training: ['The pipeline checklist, start and stop of training, a live loss chart and checkpoints.', 'python -m persona_lm status --dir work'],
   identity: ['Read-only core, versions, lineage check and probe scores. Protected changes stay typed-confirmation only.', 'python -m persona_lm identity show'],
   proposals: ['Proposals with a diff. Approving keeps the existing confirmation rules.', 'python -m persona_lm proposal list'],
@@ -165,7 +168,7 @@ function designPage(main) {
         h('div', { class: 'row' }, h('button', { class: 'btn', onclick: () => toast('Saved', 'ok') }, 'OK toast'), h('button', { class: 'btn', onclick: () => toast('Something failed', 'bad') }, 'Error toast'))))));
 }
 
-const PAGES = { chat: (main) => chatPage(main), memory: (main) => memoryPage(main), mood: (main) => moodPage(main), prompt: (main) => personasPage(main), data: (main) => dataPage(main), training: (main) => trainingPage(main), settings: (main) => settingsPage(main), design: (main) => designPage(main) };
+const PAGES = { chat: (main) => chatPage(main), memory: (main) => memoryPage(main), mood: (main) => moodPage(main), prompt: (main) => personasPage(main), data: (main) => dataPage(main), training: (main) => trainingPage(main), corpus: (main) => corpusPage(main), settings: (main) => settingsPage(main), design: (main) => designPage(main) };
 
 // ---------- router + nav
 function route() {

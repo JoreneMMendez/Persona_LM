@@ -131,6 +131,14 @@ On a real terminal, `train` shows a live panel (progress bar, loss, validation w
 inside the same `<|memory|>` block. `/recall words` shows what would be recalled. Limits: word-overlap search only, and the model was not yet
 fine-tuned on memory blocks, so how well it uses them is untested.
 
+## Language data (download + clean public text)
+
+    python -m persona_lm corpus                                  # English, Tagalog, Cebuano, Taglish: download, clean, check (needs: pip install datasets)
+    python -m persona_lm corpus --lang tl,taglish --mb tl=150    # only some, with a size cap in MB
+    python -m persona_lm corpus --mode clean --mix               # no download: clean what is in public_text/ and rebuild public_mix/
+
+The same thing is in the Web UI under **Language data**. Output: `public_clean/<lang>/` (and `public_mix/` with --mix), ready for `prepare --kind pretrain`.
+
 ## Web UI (stages U0, U1a, U1b; see docs/UI_PROMPT.md)
 
     python -m persona_lm ui --root C:\\path\\to\\project     # prints a link with a one-time key; this computer only (127.0.0.1)

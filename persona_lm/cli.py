@@ -1260,6 +1260,11 @@ def build_parser():
     s.add_argument("--no-open", dest="no_open", action="store_true", help="do not open the browser; just print the link")
     s.set_defaults(fn=cmd_ui)
 
+    s = sub.add_parser("corpus", help="download public text (English, Tagalog, Cebuano, Taglish), clean it and check it, ready for `prepare`; see persona_lm/corpus.py")
+    from . import corpus as _corpus
+    _corpus.add_arguments(s)
+    s.set_defaults(fn=_corpus.cmd)
+
     s = sub.add_parser("menu", help="the launcher menu (also what runs when you type just `python -m persona_lm`)")
     s.add_argument("--root", default=".", help="the project folder to look in for runs, token folders and tokenizers (default: here)")
     s.set_defaults(fn=cmd_menu)

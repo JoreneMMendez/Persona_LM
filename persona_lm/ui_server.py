@@ -1,4 +1,4 @@
-"""The local web UI server (stages U0 to U5b). Python standard library only, offline, this computer only.
+"""The local web UI server (stages U0 to U8). Python standard library only, offline, this computer only.
 
     python -m persona_lm ui                 # opens http://127.0.0.1:8777/ in your browser
     python -m persona_lm ui --port 9000 --no-open --root C:\\path\\to\\project
@@ -19,6 +19,8 @@ What this file guarantees (each point has a test in tests/test_ui_u0.py):
     U1a adds the chat routes (/api/chat/...; see ui_chat.py): a message is sent with say(), never handle(), so "/approve 1" is only text.
     U2a adds the memory routes (/api/memory/...; see ui_memory.py) for the owner at the keyboard: they touch memory.json only, through
     MemoryStore. Forget needs its id typed back; maintenance applies only the plan that was previewed. Chat text never reaches them.
+  * U8 adds the Language data routes (/api/corpus/...; see ui_corpus.py): the owner starts a download + clean of PUBLIC text. The command is built here from
+    language ids, a mode and numbers; nothing else comes from the page.
   * Nothing the owner types is logged by this server (the per-request log line is switched off).
 """
 import hmac
@@ -34,6 +36,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from . import __version__
 from .ui_chat import ChatHub, ChatProblem
+from .ui_corpus import CorpusHub, CorpusProblem
 from .ui_data import DataHub, DataProblem
 from .ui_memory import MemoryHub, MemoryHubProblem
 from .ui_mind import MindHub, MindProblem
@@ -58,6 +61,7 @@ STATIC = {
     "/static/data.js": ("data.js", "text/javascript; charset=utf-8"),
     "/static/personas.js": ("personas.js", "text/javascript; charset=utf-8"),
     "/static/training.js": ("training.js", "text/javascript; charset=utf-8"),
+    "/static/corpus.js": ("corpus.js", "text/javascript; charset=utf-8"),
     "/static/favicon.svg": ("favicon.svg", "image/svg+xml"),
 }
 INDEX_FILE = "index.html"
@@ -81,7 +85,7 @@ class PathGuard:
     # count files; the private/ folder inside data_msgr is blocked below.
     ALLOWED_TOP = (
         "memory.json", "chat_archive.jsonl", "mood.json", "person_card.md", "persona_settings.json", "project.json", "identity_core", "work", "work2", "work3",
-        "data_chat", "data_chat4096", "data_pre", "saved_chats", "data_msgr", "data_msgr_chats", "data_msgr_archive", "exports", "docs", "HANDOFF.md", "README.md",
+        "data_chat", "data_chat4096", "data_pre", "public_text", "public_clean", "public_mix", "saved_chats", "data_msgr", "data_msgr_chats", "data_msgr_archive", "exports", "docs", "HANDOFF.md", "README.md",
     )
 
     def __init__(self, root):
@@ -134,12 +138,15 @@ STORAGE = [
     ("work3", "Third work folder (s30m runs)", "checkpoints and logs of the s30m runs", "medium"),
     ("data_chat", "Prepared chat tokens", "your chats as numbers (token files)", "high"),
     ("data_pre", "Prepared public text tokens", "public web text as numbers (not private)", "low"),
+    ("public_text", "Downloaded public text (raw)", "English, Tagalog, Cebuano and Taglish text from public datasets; also the language-data job's log", "low"),
+    ("public_clean", "Cleaned public text", "the same text after the cleaning scripts", "low"),
+    ("public_mix", "Pretraining mix", "balanced public-text files that `prepare` turns into tokens", "low"),
     ("saved_chats", "Saved conversations", "chats you saved from the Chat page, as plain text (what you and the AI wrote)", "high"),
     ("exports", "Export packages", "a copy of the AI to use elsewhere; may contain memory and identity", "high"),
 ]
 
 NEVER_LEAVES = [
-    "This page and the server run only on this computer (127.0.0.1). Nothing is sent to the internet by the UI.",
+    "This page and the server run only on this computer (127.0.0.1). Nothing of yours is sent to the internet. The one thing that reaches out is the Language data page's download, and only after you press Start: it fetches public text and uploads nothing.",
     "The page loads no fonts, scripts, images or analytics from any outside site (the security header forbids it).",
     "The UI does not read the data_msgr/private/ folder or the raw Messenger exports, and it has no route to list or download them.",
     "What you type in the chat is not written to a server log. It is saved only where a feature says so (memory, archive, saved chats).",
@@ -152,6 +159,7 @@ SECTIONS = [
     {"id": "mood", "label": "Mood and Person", "stage": "U2", "icon": "heart", "ready": True},
     {"id": "prompt", "label": "Personas", "stage": "U3", "icon": "layers", "ready": True},
     {"id": "data", "label": "Data", "stage": "U4", "icon": "database", "ready": True},
+    {"id": "corpus", "label": "Language data", "stage": "U8", "icon": "download", "ready": True},
     {"id": "training", "label": "Training", "stage": "U5", "icon": "chart", "ready": True},
     {"id": "identity", "label": "Identity", "stage": "U6", "icon": "shield"},
     {"id": "proposals", "label": "Proposals", "stage": "U6", "icon": "inbox"},
@@ -178,6 +186,7 @@ class UIState:
         self.data = DataHub(self.guard)
         self.train = TrainHub(self.guard)
         self.job = JobHub(self.guard)
+        self.corpus = CorpusHub(self.guard, train_hub=self.job)
 
     def allowed_hosts(self):
         return ("127.0.0.1:%d" % self.port, "localhost:%d" % self.port)
@@ -187,7 +196,7 @@ class UIState:
 
     def info(self):
         return {"name": "PersonaLM", "version": __version__, "project": os.path.basename(self.guard.root) or self.guard.root,
-                "sections": SECTIONS, "stage": "U5b", "uptime_s": int(time.time() - self.started)}
+                "sections": SECTIONS, "stage": "U8", "uptime_s": int(time.time() - self.started)}
 
     def privacy(self):
         items = []
@@ -328,6 +337,11 @@ def make_handler(state):
                     return self._data(path, url)
                 if path in TRAIN_GET:
                     return self._train(path, url)
+                if path in CORPUS_GET:
+                    try:
+                        return self._json(200, {"ok": True, **(state.corpus.overview() if path == "/api/corpus/overview" else state.corpus.job_status())})
+                    except CorpusProblem as e:
+                        return self._error(e.code, str(e))
                 return self._error(404, "no such route")
             if not self._gate(False):
                 return
@@ -479,6 +493,11 @@ def make_handler(state):
                     return self._json(200, {"ok": True, **(state.job.start(body) if path == "/api/train/start" else state.job.stop(body))})
                 except TrainProblem as e:
                     return self._error(e.code, str(e))
+            if path in CORPUS_POST:                          # U8: owner buttons; language ids, a mode and numbers only (see ui_corpus.py)
+                try:
+                    return self._json(200, {"ok": True, **(state.corpus.start(body) if path == "/api/corpus/start" else state.corpus.stop(body))})
+                except CorpusProblem as e:
+                    return self._error(e.code, str(e))
             if path in MEMORY_POST:
                 return self._memory(path, urlsplit(self.path), body)
             if path in MIND_POST:
@@ -504,8 +523,10 @@ DATA_GET = ["/api/data/audit", "/api/data/clean-preview", "/api/data/overview", 
 DATA_POST = ["/api/data/clean-apply"]
 TRAIN_GET = ["/api/train/checkpoints", "/api/train/history", "/api/train/job", "/api/train/log", "/api/train/plan"]       # U5a read only; U5b adds job (status)
 TRAIN_POST = ["/api/train/start", "/api/train/stop"]                                                                    # U5b: owner buttons, see ui_job.py
+CORPUS_GET = ["/api/corpus/job", "/api/corpus/overview"]
+CORPUS_POST = ["/api/corpus/start", "/api/corpus/stop"]
 MIND_POST = ["/api/person/add", "/api/person/edit", "/api/person/remove"]
-ROUTES = {"GET": ["/", "/api/health", "/api/info", "/api/privacy"] + CHAT_GET + PERSONA_GET + MEMORY_GET + MIND_GET + DATA_GET + TRAIN_GET + sorted(STATIC), "POST": ["/api/ping"] + CHAT_POST + PERSONA_POST + MEMORY_POST + MIND_POST + DATA_POST + TRAIN_POST}
+ROUTES = {"GET": ["/", "/api/health", "/api/info", "/api/privacy"] + CHAT_GET + PERSONA_GET + MEMORY_GET + MIND_GET + DATA_GET + TRAIN_GET + CORPUS_GET + sorted(STATIC), "POST": ["/api/ping"] + CHAT_POST + PERSONA_POST + MEMORY_POST + MIND_POST + DATA_POST + TRAIN_POST + CORPUS_POST}
 
 
 def make_server(root=".", host="127.0.0.1", port=DEFAULT_PORT, token=None):

@@ -84,7 +84,7 @@ class Routes(TrainBase):
 
     def test_stage_and_section(self):
         st, info = self.get("/api/info")
-        self.assertEqual(info["stage"], "U5b")
+        self.assertEqual(info["stage"], "U8")
         self.assertTrue([s for s in info["sections"] if s["id"] == "training"][0]["ready"])
 
     def test_module_never_writes_or_starts_programs(self):

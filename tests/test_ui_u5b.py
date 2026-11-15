@@ -118,7 +118,7 @@ class Routes(JobBase):
         self.assertEqual(self.api("POST", "/api/train/start", "workdir=work2", headers={"Content-Type": "text/plain"})[0], 415)
 
     def test_stage_name(self):
-        self.assertEqual(self.get("/api/info")[1]["stage"], "U5b")
+        self.assertEqual(self.get("/api/info")[1]["stage"], "U8")
 
 
 class Status(JobBase):
