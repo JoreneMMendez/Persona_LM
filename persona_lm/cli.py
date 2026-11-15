@@ -1265,6 +1265,11 @@ def build_parser():
     _corpus.add_arguments(s)
     s.set_defaults(fn=_corpus.cmd)
 
+    s = sub.add_parser("build-tokens", help="one click: turn the cleaned language data into token files in a NEW folder (see persona_lm/buildtokens.py)")
+    from . import buildtokens as _bt
+    _bt.add_arguments(s)
+    s.set_defaults(fn=_bt.cmd)
+
     s = sub.add_parser("menu", help="the launcher menu (also what runs when you type just `python -m persona_lm`)")
     s.add_argument("--root", default=".", help="the project folder to look in for runs, token folders and tokenizers (default: here)")
     s.set_defaults(fn=cmd_menu)
