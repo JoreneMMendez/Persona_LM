@@ -16,6 +16,7 @@ Importing this file is safe without PyTorch installed; the functions then raise 
 """
 import math
 import os
+import threading
 import time
 import json
 
@@ -271,9 +272,122 @@ def micro_count(x, m):
     return float(x.size) if m is None else float(m.sum())
 
 
+# ------------------------------------------------------------------ CPU and GPU together (hybrid)
+# One optimizer step is `accum` micro-batches. The GPU does most of them; a worker thread does the last `n_cpu` of them on the
+# CPU at the same time (PyTorch releases the GIL inside its maths, so both really run in parallel). The CPU keeps its own
+# float32 copy of the weights, refreshed from the GPU at the start of every step; its gradients are added to the GPU's gradients
+# before clipping and AdamW. Every micro-batch is still divided by its own denominator, so the update is the same one the GPU
+# alone would make (up to floating-point rounding). The checkpoint, the data order and the optimizer are unchanged.
+# The gain is real only if the CPU is not much slower than the GPU: see choose_cpu_share() and `--cpu-share auto`.
+def choose_cpu_share(t_gpu, t_cpu, accum, overhead=0.0, min_gain=0.05):
+    """Pure arithmetic. t_gpu / t_cpu: seconds for ONE micro-batch on each device. Returns (n_cpu, predicted_step_seconds,
+    gpu_only_step_seconds). n_cpu is 0 unless some split beats the GPU alone by at least min_gain (5 %)."""
+    base = accum * t_gpu
+    best_n, best_t = 0, base
+    for n in range(1, accum):
+        t = max((accum - n) * t_gpu, n * t_cpu) + overhead
+        if t < best_t:
+            best_n, best_t = n, t
+    if best_n and best_t > base * (1.0 - min_gain):
+        return 0, base, base
+    return best_n, best_t, base
+
+
+def make_cpu_params(p):
+    """A float32 CPU copy of the weights (its own tensors, with gradients)."""
+    return {k: w.detach().to("cpu", copy=True).requires_grad_(True) for k, w in p.items()}
+
+
+def sync_cpu_params(p_cpu, p):
+    with torch.no_grad():
+        for k, w in p.items():
+            p_cpu[k].copy_(w.detach())
+
+
+def hybrid_accumulate_step(p, p_cpu, cfg, batches, denoms, device, precision, n_cpu, scale=1.0):
+    """Like accumulate_step(), but the last n_cpu micro-batches run on the CPU in a worker thread while the GPU does the rest.
+    Gradients end up in p[...].grad exactly as accumulate_step would leave them. Returns the step's loss."""
+    n_cpu = max(0, min(int(n_cpu), len(batches) - 1))      # the main device always keeps at least one micro-batch
+    if n_cpu == 0 or p_cpu is None:
+        return accumulate_step(p, cfg, batches, denoms, device, precision, scale)
+    main_b, cpu_b = batches[:-n_cpu], batches[-n_cpu:]
+    main_d, cpu_d = denoms[:-n_cpu], denoms[-n_cpu:]
+    sync_cpu_params(p_cpu, p)
+    for w in p_cpu.values():
+        w.grad = None
+    out = {}
+
+    def work():
+        try:
+            out["loss"] = accumulate_step(p_cpu, cfg, cpu_b, cpu_d, torch.device("cpu"), "fp32", scale)
+        except BaseException as e:           # handed back to the main thread below
+            out["error"] = e
+
+    th = threading.Thread(target=work, daemon=True)
+    th.start()
+    try:
+        main_loss = accumulate_step(p, cfg, main_b, main_d, device, precision, scale)
+    finally:
+        th.join()
+    if "error" in out:
+        raise out["error"]
+    with torch.no_grad():
+        for k, w in p.items():
+            g = p_cpu[k].grad
+            if g is None:
+                continue
+            g = g.to(w.device)
+            if w.grad is None:
+                w.grad = g.clone()
+            else:
+                w.grad.add_(g)
+    return main_loss + out["loss"]
+
+
+def probe_cpu_share(p, p_cpu, cfg, batch, device, precision, accum, log=print):
+    """Times one micro-batch on the GPU and on the CPU (plus the weight/gradient copying) and returns the best n_cpu."""
+    x, y, m = batch
+    one, dn = [(x, y, m)], [micro_count(x, m)]
+    cpu = torch.device("cpu")
+
+    def sync():
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+
+    def clear():
+        for w in list(p.values()) + list(p_cpu.values()):
+            w.grad = None
+
+    accumulate_step(p, cfg, one, dn, device, precision)                  # warm-up (kernel selection, memory allocation)
+    sync()
+    t = time.time()
+    accumulate_step(p, cfg, one, dn, device, precision)
+    sync()
+    t_gpu = time.time() - t
+    t = time.time()
+    sync_cpu_params(p_cpu, p)
+    t_copy = time.time() - t
+    t = time.time()
+    accumulate_step(p_cpu, cfg, one, dn, cpu, "fp32")
+    t_cpu = time.time() - t
+    t = time.time()
+    with torch.no_grad():
+        for k, w in p.items():
+            w.grad = p_cpu[k].grad.to(w.device).clone() if w.grad is None else w.grad.add_(p_cpu[k].grad.to(w.device))
+    sync()
+    t_back = time.time() - t
+    clear()
+    n, t_hyb, t_base = choose_cpu_share(t_gpu, t_cpu, accum, overhead=t_copy + t_back)
+    log("cpu-share probe: one micro-batch takes %.2f s on the GPU and %.2f s on the CPU (copying %.2f s). GPU only: %.2f s per step; %s" % (
+        t_gpu, t_cpu, t_copy + t_back, t_base,
+        ("%d of %d micro-batches on the CPU: about %.2f s per step (%.0f %% faster)" % (n, accum, t_hyb, (t_base / t_hyb - 1) * 100)) if n
+        else "the CPU is too slow to help, so the GPU works alone"))
+    return n
+
+
 # ------------------------------------------------------------------ training loop
 def train_torch(run_dir, data_dir, cfg=None, hp=None, init_from=None, log=print, max_steps_this_call=None,
-                device="auto", precision="auto", deterministic=False):
+                device="auto", precision="auto", deterministic=False, cpu_share="0", cpu_threads=None):
     """Same contract as train.train(), on PyTorch. Reads and writes the same ckpt.npz, so a run can be started on one machine
     (or backend) and continued on another."""
     _need_torch()
@@ -299,6 +413,27 @@ def train_torch(run_dir, data_dir, cfg=None, hp=None, init_from=None, log=print,
     last_ck, t0, done_here, skipped = time.time(), time.time(), 0, 0
     tokens_per_step = hp["batch"] * hp["accum"] * cfg.ctx
 
+    # CPU + GPU together: cpu_share = "0" (off), "auto" (time both and choose) or a number of micro-batches per step for the CPU
+    n_cpu, p_cpu = 0, None
+    want_cpu = str(cpu_share if cpu_share is not None else "0").strip().lower()
+    if want_cpu != "0":
+        if dev.type == "cpu":
+            log("cpu-share ignored: training already runs on the CPU")
+        elif hp["accum"] < 2:
+            log("cpu-share ignored: it needs --accum 2 or more (each step must have at least 2 micro-batches to share)")
+        else:
+            torch.set_num_threads(max(1, int(cpu_threads) if cpu_threads else (os.cpu_count() or 2) - 2))     # leave cores for the GPU's own work
+            p_cpu = make_cpu_params(p)
+            if want_cpu == "auto":
+                probe = train_s.batch(np.random.Generator(np.random.PCG64(777)), hp["batch"], cfg.ctx)         # own RNG: the data order is not touched
+                n_cpu = probe_cpu_share(p, p_cpu, cfg, probe, dev, prec, hp["accum"], log)
+            else:
+                n_cpu = max(0, min(int(want_cpu), hp["accum"] - 1))
+            if n_cpu:
+                log("hybrid training: %d of %d micro-batches per step on the CPU (%d threads), the rest on %s" % (n_cpu, hp["accum"], torch.get_num_threads(), dev))
+            else:
+                p_cpu = None
+
     def checkpoint():
         backend = {"name": "torch", "device": str(dev), "precision": prec, "loss_scale": scaler.scale}
         save_ckpt(ck_path, params_to_numpy(p), opt.state(), _meta(cfg, hp, step, rng, history, st.tok_hash, backend))
@@ -310,7 +445,7 @@ def train_torch(run_dir, data_dir, cfg=None, hp=None, init_from=None, log=print,
         batches = [train_s.batch(rng, hp["batch"], cfg.ctx) for _ in range(hp["accum"])]     # identical data order on every machine
         denoms = step_denominators(batches, hp["loss_norm"])
         used_scale = scaler.scale                          # the factor backward() is about to multiply the gradients by
-        loss = accumulate_step(p, cfg, batches, denoms, dev, prec, scale=used_scale)     # returned loss is the true (unscaled) one
+        loss = hybrid_accumulate_step(p, p_cpu, cfg, batches, denoms, dev, prec, n_cpu, scale=used_scale)     # returned loss is the true (unscaled) one
         gn, finite = grad_norm_and_check(p)
         gn /= used_scale
         scaler.update(finite)                              # may change scaler.scale for the NEXT step; this step uses used_scale

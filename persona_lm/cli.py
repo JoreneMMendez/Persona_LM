@@ -188,11 +188,16 @@ def cmd_train(a):
     with open(os.path.join(a.data_dir, "meta.json")) as f:
         meta = json.load(f)
     cfg = _cfg_for(a, meta["vocab_size"])
+    from .pretty import make_log
+    log = make_log("PersonaLM training  |  %s  |  run %s" % (getattr(a, "size", "?"), a.run), plain=getattr(a, "plain", False))
     if choose_backend(a.backend) == "torch":
         from .torch_backend import train_torch
-        train_torch(a.run, a.data_dir, cfg, hp, init_from=a.init_from, device=a.device, precision=a.precision, deterministic=a.deterministic)
+        train_torch(a.run, a.data_dir, cfg, hp, init_from=a.init_from, log=log, device=a.device, precision=a.precision, deterministic=a.deterministic,
+                    cpu_share=a.cpu_share, cpu_threads=a.cpu_threads)
     else:
-        train(a.run, a.data_dir, cfg, hp, init_from=a.init_from)
+        if str(a.cpu_share) != "0":
+            print("note: --cpu-share is ignored: the NumPy backend already trains on the CPU only")
+        train(a.run, a.data_dir, cfg, hp, init_from=a.init_from, log=log)
 
 
 def _load_model(a):
@@ -966,6 +971,10 @@ def build_parser():
         s.add_argument("--" + k.replace("_", "-"), dest=k, type=type(v), default=None, help="default %s" % (v,))
     _add_backend_args(s)
     s.add_argument("--deterministic", action="store_true", help="(PyTorch) ask for deterministic GPU kernels; slower, and not guaranteed bit-exact on every GPU")
+    s.add_argument("--cpu-share", default="0", help="(PyTorch, GPU) let the CPU work too: how many of the --accum micro-batches per step run on the CPU at the same time, "
+                   "or auto (times both and picks). Default 0 = GPU only. Needs --accum 2 or more and extra RAM; only helps if the CPU is not far slower than the GPU")
+    s.add_argument("--cpu-threads", type=int, default=None, help="CPU threads for --cpu-share (default: all cores minus 2)")
+    s.add_argument("--plain", action="store_true", help="plain log lines instead of the live panel (the panel only appears on a real terminal anyway)")
     s.set_defaults(fn=cmd_train)
 
     for name, fn in (("generate", cmd_generate), ("chat", cmd_chat), ("export-gguf", cmd_export)):

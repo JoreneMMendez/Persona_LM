@@ -114,6 +114,8 @@ python -m persona_lm train ... --backend auto --device auto --precision auto --b
 ```
 `--backend auto` uses PyTorch if installed (GPU if present, else CPU) and falls back to NumPy. `--precision auto` picks bf16 on NVIDIA Ampere or newer, fp16 on older GPUs, fp32 on CPU.
 `--batch` is the micro-batch that must fit in memory; `--batch x --accum` is the effective batch. Both backends read and write the same `ckpt.npz`.
+`--cpu-share auto` (needs `--accum 2` or more) lets the CPU work on some micro-batches at the same time as the GPU: it times both and uses the CPU only if that is faster (`--cpu-share 1` forces one micro-batch per step, `--cpu-threads N` sets the CPU threads). The weights and checkpoint format do not change.
+On a real terminal, `train` shows a live panel (progress bar, loss, validation with the best step, speed, ETA, loss sparkline, an overfitting warning). `--plain` or `PERSONA_PLAIN=1` turns it off; when the output goes to a file or the web UI the plain log lines are unchanged.
 
 ## Old chats, merging cleaner, s30m (2026-11-15; see HANDOFF.md "Newest state 4")
 
