@@ -238,3 +238,18 @@ details.card > summary { cursor: pointer; font-weight: 600; }
 .mc-val { stroke: var(--accent); stroke-width: 2; } .mc-aro { stroke: var(--warn); stroke-width: 2; stroke-dasharray: 5 3; } .mc-vd { fill: var(--accent); }
 .card-text { overflow-wrap: anywhere; } .list li select { width: auto; min-height: 32px; padding: 2px 8px; }
 @media (max-width: 860px) { .mood-grid { grid-template-columns: 1fr; } .graph-svg { height: 52vh; } }
+
+/* ---- U3a: Prompt panel (a drawer; on wide screens it sits beside the chat and the chat stays usable) */
+.prompt-panel { width: min(460px, 100vw); }
+.prompt-panel[open]:not(:modal) { position: fixed; inset: 0 0 0 auto; margin: 0; z-index: 20; box-shadow: var(--shadow); border: 1px solid var(--line); overflow: auto; }
+.prompt-panel .dialog-actions { justify-content: flex-end; }
+.pp-sec { display: grid; gap: var(--s2); } .pp-sec h3 { margin: 0; font-size: .95rem; }
+.pp-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s2); }
+.pp-list li { padding: var(--s2) var(--s3); border: 1px solid var(--line); border-radius: var(--r); background: var(--surface-2); overflow-wrap: anywhere; }
+.pp-block { display: grid; gap: 4px; }
+.pp-text { margin: 0; padding: var(--s2) var(--s3); border: 1px solid var(--line); border-radius: var(--r); background: var(--surface-2); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 14rem; overflow: auto; }
+
+/* ---- U3b: Personas page */
+.personas h3 { margin: 0; } .row.between { justify-content: space-between; }
+.persona.on { border-color: var(--accent); }
+.persona-text { margin: var(--s2) 0; overflow-wrap: anywhere; white-space: pre-wrap; }

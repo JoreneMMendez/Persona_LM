@@ -188,7 +188,7 @@ class ApiAuth(Base):
         st, _, body = self.api("GET", "/api/health")
         self.assertEqual((st, json.loads(body)), (200, {"ok": True}))
         info = json.loads(self.api("GET", "/api/info")[2])
-        self.assertEqual(info["stage"], "U2b")
+        self.assertEqual(info["stage"], "U3b")
         ids = [s["id"] for s in info["sections"]]
         for need in ("chat", "memory", "mood", "prompt", "data", "training", "identity", "proposals", "models", "export", "settings"):
             self.assertIn(need, ids)
@@ -306,18 +306,19 @@ class SafetyDesign(Base):
     """No route can run a command, approve, change identity or write memory. U1a/U1b add ONLY the seven chat POST routes and three chat GET routes
     below (see tests/test_ui_u1a.py); every other route must still have a harmless name."""
     CHAT = {"/api/chat/count", "/api/chat/load", "/api/chat/reset", "/api/chat/save", "/api/chat/send", "/api/chat/settings", "/api/chat/stop",
-            "/api/chat/poll", "/api/chat/sources", "/api/chat/state"}
+            "/api/chat/poll", "/api/chat/prompt", "/api/chat/sources", "/api/chat/state"}
     MEMORY = {"/api/memory/list", "/api/memory/plan", "/api/memory/add", "/api/memory/edit", "/api/memory/forget", "/api/memory/maintain",
               "/api/graph", "/api/mood", "/api/person", "/api/person/add", "/api/person/edit", "/api/person/remove"}   # U2a, U2b: owner-only, see test_ui_u2a.py
+    PERSONA = {"/api/personas", "/api/personas/use"}                                  # U3b: owner button, see test_ui_u3b.py
     FORBIDDEN = re.compile(r"approve|reject|apply|identity|memory|exec|run|shell|command|promote|rollback|forget|chat|file|delete|write", re.I)
 
     def test_route_table_has_no_dangerous_names(self):
         self.assertEqual(UI.ROUTES["POST"], ["/api/ping", "/api/chat/count", "/api/chat/load", "/api/chat/reset", "/api/chat/save", "/api/chat/send", "/api/chat/settings", "/api/chat/stop",
-                                           "/api/memory/add", "/api/memory/edit", "/api/memory/forget", "/api/memory/maintain",
+                                           "/api/personas/use", "/api/memory/add", "/api/memory/edit", "/api/memory/forget", "/api/memory/maintain",
                                            "/api/person/add", "/api/person/edit", "/api/person/remove"])
         for method, paths in UI.ROUTES.items():
             for p in paths:
-                if p.startswith("/api/") and p not in self.CHAT and p not in self.MEMORY:
+                if p.startswith("/api/") and p not in self.CHAT and p not in self.MEMORY and p not in self.PERSONA:
                     self.assertIsNone(self.FORBIDDEN.search(p), p)
 
     def test_dangerous_routes_do_not_exist_even_with_the_token(self):

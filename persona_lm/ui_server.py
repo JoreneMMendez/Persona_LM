@@ -1,4 +1,4 @@
-"""The local web UI server (stages U0 to U2b). Python standard library only, offline, this computer only.
+"""The local web UI server (stages U0 to U3b). Python standard library only, offline, this computer only.
 
     python -m persona_lm ui                 # opens http://127.0.0.1:8777/ in your browser
     python -m persona_lm ui --port 9000 --no-open --root C:\\path\\to\\project
@@ -74,7 +74,7 @@ class PathGuard:
     # Top-level names a later stage may read (U0 only checks that they exist). Chat data folders are here so the Data page can
     # count files; the private/ folder inside data_msgr is blocked below.
     ALLOWED_TOP = (
-        "memory.json", "mood.json", "person_card.md", "persona_settings.json", "project.json", "identity_core", "work", "work2", "work3",
+        "memory.json", "chat_archive.jsonl", "mood.json", "person_card.md", "persona_settings.json", "project.json", "identity_core", "work", "work2", "work3",
         "data_chat", "data_pre", "saved_chats", "data_msgr", "data_msgr_chats", "data_msgr_archive", "exports", "docs", "HANDOFF.md", "README.md",
     )
 
@@ -144,7 +144,7 @@ SECTIONS = [
     {"id": "chat", "label": "Chat", "stage": "U1", "icon": "chat", "ready": True},
     {"id": "memory", "label": "Memory", "stage": "U2", "icon": "graph", "ready": True},
     {"id": "mood", "label": "Mood and Person", "stage": "U2", "icon": "heart", "ready": True},
-    {"id": "prompt", "label": "Prompt and personas", "stage": "U3", "icon": "layers"},
+    {"id": "prompt", "label": "Personas", "stage": "U3", "icon": "layers", "ready": True},
     {"id": "data", "label": "Data", "stage": "U4", "icon": "database"},
     {"id": "training", "label": "Training", "stage": "U5", "icon": "chart"},
     {"id": "identity", "label": "Identity", "stage": "U6", "icon": "shield"},
@@ -178,7 +178,7 @@ class UIState:
 
     def info(self):
         return {"name": "PersonaLM", "version": __version__, "project": os.path.basename(self.guard.root) or self.guard.root,
-                "sections": SECTIONS, "stage": "U2b", "uptime_s": int(time.time() - self.started)}
+                "sections": SECTIONS, "stage": "U3b", "uptime_s": int(time.time() - self.started)}
 
     def privacy(self):
         items = []
@@ -304,8 +304,13 @@ def make_handler(state):
                     return self._json(200, {"ok": True, **state.info()})
                 if path == "/api/privacy":
                     return self._json(200, {"ok": True, **state.privacy()})
-                if path in ("/api/chat/sources", "/api/chat/state", "/api/chat/poll"):
+                if path in ("/api/chat/sources", "/api/chat/state", "/api/chat/poll", "/api/chat/prompt"):
                     return self._chat_get(path, url)
+                if path == "/api/personas":
+                    try:
+                        return self._json(200, {"ok": True, **state.chat.personas(parse_qs(url.query).get("core", [None])[0])})
+                    except ChatProblem as e:
+                        return self._error(e.code, str(e))
                 if path in MEMORY_GET:
                     return self._memory(path, url, None)
                 if path in MIND_GET:
@@ -351,6 +356,8 @@ def make_handler(state):
                     return self._json(200, {"ok": True, **state.chat.sources()})
                 if path == "/api/chat/state":
                     return self._json(200, {"ok": True, **state.chat.state()})
+                if path == "/api/chat/prompt":
+                    return self._json(200, {"ok": True, **state.chat.prompt()})
                 return self._json(200, {"ok": True, **state.chat.poll(parse_qs(url.query).get("job", [""])[0])})
             except ChatProblem as e:
                 return self._error(e.code, str(e))
@@ -405,6 +412,11 @@ def make_handler(state):
                     return self._json(200, {"ok": True, **out})
                 except ChatProblem as e:
                     return self._error(e.code, str(e))
+            if path == "/api/personas/use":
+                try:
+                    return self._json(200, {"ok": True, **state.chat.use_persona(body.get("name"))})
+                except ChatProblem as e:
+                    return self._error(e.code, str(e))
             if path in MEMORY_POST:
                 return self._memory(path, urlsplit(self.path), body)
             if path in MIND_POST:
@@ -419,13 +431,15 @@ def make_handler(state):
     return Handler
 
 
-CHAT_GET = ["/api/chat/poll", "/api/chat/sources", "/api/chat/state"]
+CHAT_GET = ["/api/chat/poll", "/api/chat/prompt", "/api/chat/sources", "/api/chat/state"]
 CHAT_POST = ["/api/chat/count", "/api/chat/load", "/api/chat/reset", "/api/chat/save", "/api/chat/send", "/api/chat/settings", "/api/chat/stop"]
 MEMORY_GET = ["/api/memory/list", "/api/memory/plan"]
 MEMORY_POST = ["/api/memory/add", "/api/memory/edit", "/api/memory/forget", "/api/memory/maintain"]
+PERSONA_GET = ["/api/personas"]
+PERSONA_POST = ["/api/personas/use"]
 MIND_GET = ["/api/graph", "/api/mood", "/api/person"]
 MIND_POST = ["/api/person/add", "/api/person/edit", "/api/person/remove"]
-ROUTES = {"GET": ["/", "/api/health", "/api/info", "/api/privacy"] + CHAT_GET + MEMORY_GET + MIND_GET + sorted(STATIC), "POST": ["/api/ping"] + CHAT_POST + MEMORY_POST + MIND_POST}
+ROUTES = {"GET": ["/", "/api/health", "/api/info", "/api/privacy"] + CHAT_GET + PERSONA_GET + MEMORY_GET + MIND_GET + sorted(STATIC), "POST": ["/api/ping"] + CHAT_POST + PERSONA_POST + MEMORY_POST + MIND_POST}
 
 
 def make_server(root=".", host="127.0.0.1", port=DEFAULT_PORT, token=None):

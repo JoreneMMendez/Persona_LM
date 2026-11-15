@@ -1,4 +1,4 @@
-// PersonaLM UI, stages U1a + U1b: the Chat page. Pick a model, load it, talk to it; settings, save, clear, mood badge.
+// PersonaLM UI, stages U1a + U1b + U3a (Prompt panel): the Chat page. Pick a model, load it, talk to it; settings, save, clear, mood badge.
 // Text from you and from the AI is only ever put on the page with textContent (never as HTML), and it is never a command:
 // the server sends it to the model as a plain message.
 import { h, api, toast, icon } from './app.js';
@@ -31,6 +31,8 @@ async function showLoader(main, mine, current) {
   const sys = h('textarea', { id: 'sys', rows: '2', maxlength: '600', placeholder: 'Optional. For example: You are Luna. Leave empty to chat without a system line.' });
   const ver = h('input', { id: 'ver', type: 'text', placeholder: 'only if the core has no current version, e.g. v1', maxlength: '40' });
   const moodBox = h('input', { type: 'checkbox', id: 'mood' });
+  const memBox = h('input', { type: 'checkbox', id: 'mem' });
+  const arcBox = h('input', { type: 'checkbox', id: 'arc' });
   const err = h('div', { class: 'callout bad', role: 'alert', hidden: true });
   const loadBtn = h('button', { class: 'btn primary', type: 'button' }, 'Load model');
   let mode = src.checkpoints.length || !src.cores.length ? 'ckpt' : 'core';
@@ -47,7 +49,11 @@ async function showLoader(main, mine, current) {
     h('div', { class: 'field' }, h('label', { for: 'tk' }, 'Tokenizer'), tkSel, h('span', { class: 'hint' }, 'It must be the one the model was trained with (normally work/tok.json). It is filled in for you.')),
     h('div', { class: 'field' }, h('label', { for: 'sys' }, 'System line'), sys),
     h('div', { class: 'field' }, h('label', { class: 'check', for: 'mood' }, moodBox, ' Use a mood (mood.json)'),
-      h('span', { class: 'hint' }, 'Off by default. When on, what you type moves the AI\u2019s mood, the mood is shown as a badge and saved in mood.json, and it also adds a mood line to what the model reads. The model was not fine-tuned on that line yet, so replies may change.')));
+      h('span', { class: 'hint' }, 'Off by default. When on, what you type moves the AI\u2019s mood, the mood is shown as a badge and saved in mood.json, and it also adds a mood line to what the model reads. The model was not fine-tuned on that line yet, so replies may change.')),
+    h('div', { class: 'field' }, h('label', { class: 'check', for: 'mem' }, memBox, ' Use memories (memory.json)'),
+      h('span', { class: 'hint' }, 'Off by default. When on, the memories that match your message are added to what the model reads (the Prompt panel shows which). Using a memory also updates its \u201cused\u201d count in memory.json.')),
+    h('div', { class: 'field' }, h('label', { class: 'check', for: 'arc' }, arcBox, ' Recall old chats (chat_archive.jsonl)'),
+      h('span', { class: 'hint' }, 'Off by default. When on, old exchanges that match your message are shown to the model, and every exchange you have from now on is ADDED to chat_archive.jsonl (a file in the project folder, created if missing).')));
   const coreBox = h('div', { class: 'stack' },
     h('div', { class: 'field' }, h('label', { for: 'core' }, 'Identity core folder'), coreSel, h('span', { class: 'hint' }, 'Uses the core\u2019s current version, tokenizer, memory, mood and Person card. Nothing in it is changed by chatting.')),
     h('div', { class: 'field' }, h('label', { for: 'ver' }, 'Version (optional)'), ver));
@@ -66,6 +72,8 @@ async function showLoader(main, mine, current) {
     const body = mode === 'core' ? { core: coreSel.value, version: ver.value.trim() || undefined } : { ckpt: ckSel.value, tokenizer: tkSel.value };
     if (sys.value.trim() && mode === 'ckpt') body.system = sys.value.trim();
     if (mode === 'ckpt' && moodBox.checked) body.mood = true;
+    if (mode === 'ckpt' && memBox.checked) body.memory = true;
+    if (mode === 'ckpt' && arcBox.checked) body.archive = true;
     loadBtn.disabled = true; loadBtn.replaceChildren(h('span', { class: 'spinner', 'aria-hidden': 'true' }), ' Loading… (a few seconds)');
     try {
       const st = await api('/api/chat/load', body);
@@ -182,6 +190,7 @@ async function showChat(main, mine, st) {
     stopping = false; draftTokens = 0;
     if (mine !== epoch) return;
     paintMeter(); setBusy(false); input.focus(); scrollDown();
+    if (pdlg.open) paintPrompt();
     if (failed && !input.value) input.value = lastText;
   }
 
@@ -208,6 +217,57 @@ async function showChat(main, mine, st) {
     }
   }
   sendBtn.addEventListener('click', onSend);
+
+
+  // ---- U3a: what the model read for the newest message (read only; the page cannot change anything from here)
+  const pBody = h('div', { class: 'stack' });
+  const pBtn = h('button', { class: 'btn', type: 'button', title: 'Show exactly what the model read for the newest message' }, 'Prompt');
+  const pClose = h('button', { class: 'btn', type: 'button', onclick: () => pdlg.close() }, 'Close');
+  const pRefresh = h('button', { class: 'btn', type: 'button', onclick: () => paintPrompt() }, 'Refresh');
+  const pdlg = h('dialog', { class: 'dialog drawer prompt-panel', 'aria-labelledby': 'pp-title' },
+    h('div', { class: 'dialog-body stack' },
+      h('h2', { id: 'pp-title' }, 'What the AI read'),
+      h('p', { class: 'small muted' }, 'The exact text the model was given for the newest message, block by block, in order. Recalled memories and old chats are listed first. This panel only shows; it cannot change anything.'),
+      pBody, h('div', { class: 'dialog-actions' }, pRefresh, pClose)));
+  pdlg.addEventListener('click', (e) => { if (e.target === pdlg) pdlg.close(); });
+  const sectionClass = { system: 'info', persona: 'accent', person: 'accent', mood: 'warn', memory: 'ok', user: '', assistant: '' };
+  function ppList(title, items, render) {
+    return h('section', { class: 'pp-sec' }, h('h3', null, title), h('ul', { class: 'pp-list' }, ...items.map(render)));
+  }
+  async function paintPrompt() {
+    let d;
+    try { d = await api('/api/chat/prompt'); }
+    catch (e) { pBody.replaceChildren(h('div', { class: 'callout bad', role: 'alert' }, h('p', null, e.message))); return; }
+    const out = [];
+    const flags = h('div', { class: 'row' }, h('span', { class: 'badge ' + (d.memory_on ? 'ok' : '') }, 'memories ' + (d.memory_on ? 'on' : 'off')),
+      h('span', { class: 'badge ' + (d.archive_on ? 'ok' : '') }, 'old-chat recall ' + (d.archive_on ? 'on' : 'off')));
+    out.push(flags);
+    if (!d.has_prompt) {
+      out.push(h('div', { class: 'callout' }, h('p', null, 'Nothing has been sent yet. Send a message, then press Refresh.')));
+      if (!d.memory_on || !d.archive_on) out.push(h('p', { class: 'small muted' }, 'Memories and old-chat recall are off unless you tick them in the loader (Change model). With both off, the model reads only the system line, the mood line (if on) and the conversation.'));
+      pBody.replaceChildren(...out); return;
+    }
+    const pct = Math.min(100, Math.round(100 * d.tokens / Math.max(d.budget, 1)));
+    const fill = h('span', { class: 'meter-fill' }); fill.style.width = pct + '%';
+    out.push(h('div', { class: 'field' },
+      h('div', { class: 'row' }, h('div', { class: 'meter' + (pct >= 90 ? ' hot' : ''), role: 'img', 'aria-label': d.tokens + ' of ' + d.budget + ' tokens used' }, fill),
+        h('span', { class: 'small' }, d.tokens + ' of ' + d.budget + ' tokens (window ' + d.window + ', ' + d.reply_max + ' kept free for the reply)')),
+      h('span', { class: 'hint' }, d.messages_in + ' message' + (d.messages_in === 1 ? '' : 's') + ' in the prompt' +
+        (d.messages_left_out ? ', ' + d.messages_left_out + ' oldest left out because they no longer fit' : '') + '. Shown ' + (d.running ? 'while the reply is being written' : d.age_seconds + ' s ago') + '.')));
+    if (d.memories_unfit) out.push(h('div', { class: 'callout warn' }, h('p', null, d.memories_unfit + ' memory match' + (d.memories_unfit === 1 ? '' : 'es') + ' found but none fit in the memory budget (' + d.memory_budget + ' tokens), so none were used.')));
+    if (d.memories.length) out.push(ppList('Memories recalled (' + d.memories.length + ')', d.memories, (m) =>
+      h('li', null, h('span', { class: 'mono small' }, m.id), ' ', m.pinned ? h('span', { class: 'badge accent' }, 'pinned') : null, ' ', h('span', { class: 'badge' }, m.emotion || 'neutral'), h('div', null, m.text))));
+    else if (d.memory_on) out.push(h('p', { class: 'small muted' }, 'No memory matched the newest message.'));
+    if (d.old_chats.length) out.push(ppList('Old chats recalled (' + d.old_chats.length + ')', d.old_chats, (o) =>
+      h('li', null, h('span', { class: 'mono small' }, '#' + o.id), ' ', h('span', { class: 'badge' }, o.when), h('div', null, 'you: ' + o.user), h('div', { class: 'muted' }, 'AI: ' + o.ai))));
+    else if (d.archive_on) out.push(h('p', { class: 'small muted' }, 'No old exchange matched the newest message.'));
+    out.push(h('section', { class: 'pp-sec' }, h('h3', null, 'The prompt, in order'),
+      ...d.sections.map((x) => h('div', { class: 'pp-block' },
+        h('div', { class: 'row' }, h('span', { class: 'badge ' + (sectionClass[x.kind] || '') }, x.label), h('span', { class: 'small muted' }, x.tokens + ' tokens')),
+        x.open ? h('div', { class: 'small muted' }, 'The AI starts writing here.') : h('pre', { class: 'pp-text' }, x.text || '(empty)')))));
+    pBody.replaceChildren(...out);
+  }
+  pBtn.addEventListener('click', () => { paintPrompt(); if (window.innerWidth >= 1100) pdlg.show(); else pdlg.showModal(); });
 
   // ---- settings drawer
   const tempN = h('input', { id: 's-temp', type: 'number', min: '0', max: '2', step: '0.05' });
@@ -260,6 +320,18 @@ async function showChat(main, mine, st) {
       tokens = r.tokens; draftTokens = 0; input.value = ''; paintMeter(); paintMood(r.mood); warn.hidden = true; input.focus();
     } catch (e) { toast(e.message, 'bad'); }
   }
+  let maskSel = null;
+  if (st.personas && st.personas.length) {                    // U3b: wear / take off a mask (owner button; same as the typed /persona)
+    maskSel = h('select', { 'aria-label': 'Mask (persona)', title: 'Mask: prompt text only, the AI is still itself' });
+    maskSel.append(h('option', { value: 'none' }, 'No mask'));
+    st.personas.forEach((n) => maskSel.append(h('option', { value: n }, n)));
+    maskSel.value = st.persona || 'none';
+    maskSel.addEventListener('change', async () => {
+      if (busy) { toast('Press Stop first.', 'bad'); maskSel.value = st.persona || 'none'; return; }
+      try { const r = await api('/api/personas/use', { name: maskSel.value }); st.persona = r.active; toast(r.message, 'ok'); if (pdlg.open) paintPrompt(); }
+      catch (e) { toast(e.message, 'bad'); maskSel.value = st.persona || 'none'; }
+    });
+  }
   const setBtn = h('button', { class: 'btn', type: 'button', onclick: openSettings }, 'Settings');
   const saveBtn = h('button', { class: 'btn', type: 'button', onclick: onSave, title: 'Save this conversation as a text file in saved_chats/' }, 'Save');
   const clearBtn = h('button', { class: 'btn', type: 'button', onclick: onClear, title: 'Start a new conversation (memory and mood files are kept)' }, 'Clear');
@@ -267,10 +339,10 @@ async function showChat(main, mine, st) {
   const head = h('div', { class: 'chat-head' },
     h('div', { class: 'row' }, h('span', { class: 'badge accent' }, st.label), h('span', { class: 'badge' }, 'window ' + st.ctx), h('span', { class: 'badge' }, st.layers + ' layers'),
       st.name ? h('span', { class: 'badge' }, st.name) : null, moodBadge),
-    h('div', { class: 'row' }, setBtn, saveBtn, clearBtn,
+    h('div', { class: 'row' }, maskSel, pBtn, setBtn, saveBtn, clearBtn,
       h('button', { class: 'btn', type: 'button', onclick: () => { if (busy) { toast('Press Stop first.', 'bad'); return; } showLoader(main, mine, st); } }, 'Change model')));
 
-  main.replaceChildren(h('div', { class: 'chat' }, head, log, warn, dlg,
+  main.replaceChildren(h('div', { class: 'chat' }, head, log, warn, dlg, pdlg,
     h('div', { class: 'composer card' }, input, h('div', { class: 'composer-foot' }, h('div', { class: 'row meter-row' }, meter, meterTxt, draftTxt), sendBtn))));
   paintMeter(); scrollDown();
 

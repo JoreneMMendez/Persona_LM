@@ -13,13 +13,20 @@ import re
 import threading
 import time
 
+from . import identity as ID
+from . import personas as PERS
 from . import runtime as RT
+from .lineage import LineageProblem
+from .bpe import ASSISTANT, END, MEMORY, MOOD, PERSONA, SPEAKER, SYSTEM, USER
 
 TICK_LIMIT = 4000                      # most characters in one message from the page
 SYSTEM_LIMIT = 600                     # most characters in the optional system line
 MODEL_TOPS = ("work", "work2", "work3")
 MAX_DEPTH = 4
 MAX_FOUND = 200
+PANEL_TEXT = 1500                      # most characters of one prompt section sent to the Prompt panel
+BLOCKS = {SYSTEM: ("system", "System line"), PERSONA: ("persona", "Persona (mask)"), SPEAKER: ("person", "Person card (who you are)"),
+          MOOD: ("mood", "Mood line"), MEMORY: ("memory", "Memory and old-chat recall"), USER: ("user", "You said"), ASSISTANT: ("assistant", "AI said")}
 DEFAULTS = {"max_new": 120, "temperature": 0.5, "top_k": 40}      # 0.5: what HANDOFF.md recommends for full sentences
 
 
@@ -57,6 +64,7 @@ class ChatHub:
         self.ai = None
         self.label = None
         self.job = None
+        self.last_prompt = None
         self._n = 0
 
     # ---------------------------------------------------------------- what can be loaded
@@ -65,7 +73,7 @@ class ChatHub:
 
     def sources(self):
         """Checkpoints, tokenizers and identity-core folders found inside the project (a read-only listing, no file is opened)."""
-        ckpts, toks, cores = [], [], []
+        ckpts, toks = [], []
         for top in MODEL_TOPS:
             try:
                 base = self.guard.resolve(top)
@@ -111,6 +119,11 @@ class ChatHub:
             it["tokenizer"] = found
         ckpts.sort(key=lambda i: (i["previous"], -i["modified"]))
         toks.sort(key=lambda i: -i["modified"])
+        cores = self._cores()
+        return {"checkpoints": ckpts[:MAX_FOUND], "tokenizers": toks[:MAX_FOUND], "cores": cores}
+
+    def _cores(self):
+        cores = []
         try:
             top = self.guard.resolve("identity_core")
             if os.path.isfile(os.path.join(top, "core.json")):
@@ -121,7 +134,7 @@ class ChatHub:
                         cores.append({"path": "identity_core/" + d})
         except Exception:
             pass
-        return {"checkpoints": ckpts[:MAX_FOUND], "tokenizers": toks[:MAX_FOUND], "cores": cores[:MAX_FOUND]}
+        return cores[:MAX_FOUND]
 
     # ---------------------------------------------------------------- loading
     def _file(self, rel, what, suffix):
@@ -177,6 +190,12 @@ class ChatHub:
                     tk = self._file(body.get("tokenizer"), "tokenizer", ".json")
                     if body.get("mood") is True:                    # opt-in: the typed message moves the mood, which is saved in mood.json
                         kw["mood"] = self.guard.resolve("mood.json")
+                    for key, name in (("memory", "memory.json"), ("archive", "chat_archive.jsonl")):
+                        if body.get(key) is True:                   # opt-in, like --memory / --archive in the terminal
+                            full = self.guard.resolve(name)
+                            if key == "memory" and not os.path.isfile(full):
+                                raise ChatProblem("There is no memory.json in the project yet (add a memory on the Memory page first).")
+                            kw[key] = full
                     ai, label = RT.load(ckpt=ck, tokenizer=tk, **kw), self._rel(ck)
             except ChatProblem:
                 raise
@@ -185,7 +204,7 @@ class ChatHub:
             except Exception:
                 raise ChatProblem("That checkpoint and tokenizer could not be loaded together. Are they from the same model (same --size and vocabulary)?")
             self._hook(ai)
-            self.ai, self.label, self.job = ai, label, None
+            self.ai, self.label, self.job, self.last_prompt = ai, label, None, None
             return self.state()
 
     def _hook(self, ai):
@@ -194,6 +213,9 @@ class ChatHub:
 
         def generate(ids, **kw):
             job = self.job
+            s = ai.session
+            self.last_prompt = {"ids": list(ids), "memory": list(s.last_recalled), "archive": list(s.last_archive_recalled), "unfit": getattr(s, "last_unfit", 0), "history": len(s.history),
+                                "budget": s.prompt_budget(), "when": time.time(), "settings": dict(kw)}      # exactly what the model is about to read
             if job is not None:
                 kw["should_stop"] = job.stop.is_set
                 kw["on_token"] = job.ids.append
@@ -218,7 +240,8 @@ class ChatHub:
             s, cfg = self.ai.session, self.ai.cfg
             return {"loaded": True, "label": self.label, "name": self.ai.name, "ctx": cfg.ctx, "layers": cfg.n_layer, "d_model": cfg.d_model,
                     "settings": dict(s.settings), "max_new_limit": cfg.ctx - 8, "has_system": bool(s.system), "tokens": self.tokens(), "mood": self.mood(),
-                    "history": [{"role": r, "text": t} for r, t in s.history],
+                    "history": [{"role": r, "text": t} for r, t in s.history], "memory_on": s.memory is not None, "archive_on": s.archive is not None,
+                    "persona": self.ai.persona, "personas": self.ai.personas.names() if self.ai.personas is not None else None,
                     "job": self.job.id if self.job is not None and self.job.state == "running" else None}
 
     def count(self, text):
@@ -272,6 +295,110 @@ class ChatHub:
                 out.update({"reply": job.reply, "notes": job.notes, "error": job.error, "tokens": self.tokens(), "mood": self.mood()})
             return out
 
+    # ---------------------------------------------------------------- U3b: personas (masks)
+    def _persona_view(self, ps, rel, switchable):
+        items = []
+        for n in ps.names():
+            p = ps.d["personas"][n]
+            items.append({"name": n, "text": p["text"], "active": n == ps.active, "examples": len(p.get("examples") or []),
+                          "version": p.get("version"), "stale": bool(p.get("version")) and ps.stale(n)})
+        return {"loaded": True, "core": rel, "ai_name": ps.core.sections["Name"], "switchable": switchable, "active": ps.active,
+                "personas": items, "block": ps.prompt_text(), "cores": self._cores()}
+
+    def personas(self, core=None):
+        """Read only. The masks of the loaded identity core (switchable), or of another core folder named by `core` (listing only)."""
+        with self.lock:
+            cores = self._cores()
+            ai_ps = self.ai.personas if self.ai is not None else None
+            if core is None or core == "":
+                if ai_ps is None:
+                    return {"loaded": False, "cores": cores, "has_model": self.ai is not None}
+                return self._persona_view(ai_ps, self.label, True)
+            if not isinstance(core, str):
+                raise ChatProblem("core must be text.")
+            try:
+                full = self.guard.resolve(core.strip())
+            except Exception as e:
+                raise ChatProblem(self._say(e))
+            if not os.path.isfile(os.path.join(full, "core.json")):
+                raise ChatProblem("There is no identity core in that folder.")
+            if ai_ps is not None and self.label == core.strip():
+                return self._persona_view(ai_ps, self.label, True)
+            try:
+                return self._persona_view(PERS.Personas(ID.Core(full)), core.strip(), False)
+            except (PERS.PersonaProblem, ID.IdentityProblem) as e:
+                raise ChatProblem(self._say(e))
+
+    def use_persona(self, name):
+        """Owner-side mask switch through the runtime (the same as the typed /persona NAME). Only the page's own button reaches this: the chat route
+        uses say(), so what the AI writes or what you type in the chat box can never switch a mask. The conversation is kept; only prompt text changes."""
+        with self.lock:
+            self._idle()
+            if self.ai.personas is None:
+                raise ChatProblem("This AI has no personas. Load an identity core in Chat first.", 409)
+            if not isinstance(name, str) or not name.strip() or len(name) > 80:
+                raise ChatProblem("Choose a persona (or none).")
+            try:
+                msg = self.ai.switch_persona(name)
+            except RT.RuntimeProblem as e:
+                raise ChatProblem(self._say(e))
+            except (PERS.PersonaProblem, ID.IdentityProblem, LineageProblem, OSError) as e:
+                raise ChatProblem(self._say(e) + " Nothing was changed.")
+            return {"message": msg, **self.personas(), "chat": self.state()}
+
+    # ---------------------------------------------------------------- U3a: what went into the last prompt
+    @staticmethod
+    def _cut(text, n=PANEL_TEXT):
+        return text if len(text) <= n else text[:n].rstrip() + " [...]"
+
+    def prompt(self):
+        """Read-only. The exact token ids the model was given for the newest message, cut into their blocks, plus which memories and old-chat
+        exchanges were recalled. Nothing here changes the AI, the memory or the archive."""
+        with self.lock:
+            if self.ai is None:
+                raise ChatProblem("Load a model first.", 409)
+            lp = self.last_prompt
+            s = self.ai.session
+            if lp is None:
+                return {"has_prompt": False, "memory_on": s.memory is not None, "archive_on": s.archive is not None}
+            ids, tok, sections, i = lp["ids"], self.ai.tok, [], 0
+            while i < len(ids):
+                kind = BLOCKS.get(ids[i])
+                if kind is None:                                    # cannot happen with a prompt built by build_prompt(); shown as it is
+                    sections.append({"kind": "other", "label": "Other", "tokens": 1, "text": ""})
+                    i += 1
+                    continue
+                j = i + 1
+                while j < len(ids) and ids[j] != END and ids[j] not in BLOCKS:
+                    j += 1
+                closed = j < len(ids) and ids[j] == END
+                body = ids[i + 1:j]
+                try:
+                    text = tok.decode(body)
+                except Exception:
+                    text = ""
+                sections.append({"kind": kind[0], "label": kind[1], "tokens": j + (1 if closed else 0) - i, "text": self._cut(text), "open": not closed})
+                i = j + (1 if closed else 0)
+            msgs = sum(1 for x in sections if x["kind"] in ("user", "assistant") and not x.get("open"))
+            recalled = []
+            mem = s.memory
+            for mid in lp["memory"]:
+                m = mem.memories.get(mid) if mem is not None else None
+                if m is not None:
+                    recalled.append({"id": mid, "text": self._cut(m["text"], 400), "status": m.get("status"), "emotion": m.get("emotion"), "pinned": bool(m.get("pinned"))})
+            old = []
+            if s.archive is not None:
+                byid = {it["id"]: it for it in s.archive.items}
+                for aid in lp["archive"]:
+                    it = byid.get(aid)
+                    if it is not None:
+                        old.append({"id": aid, "user": self._cut(it["user"], 200), "ai": self._cut(it["ai"], 200), "when": time.strftime("%Y-%m-%d", time.localtime(it["t"]))})
+            used = sum(x["tokens"] for x in sections)
+            return {"has_prompt": True, "memory_on": mem is not None, "archive_on": s.archive is not None, "sections": sections, "tokens": used,
+                    "budget": lp["budget"], "window": s.ctx, "reply_max": s.settings["max_new"], "messages_in": msgs,
+                    "messages_left_out": max(lp["history"] - msgs, 0), "memories_unfit": lp["unfit"], "memory_budget": s.memory_tokens, "memories": recalled, "old_chats": old, "age_seconds": int(time.time() - lp["when"]),
+                    "running": self.job is not None and self.job.state == "running"}
+
     # ---------------------------------------------------------------- U1b: settings, clear, save
     def _idle(self):
         if self.ai is None:
@@ -302,7 +429,7 @@ class ChatHub:
         with self.lock:
             self._idle()
             self.ai.reset()
-            self.job = None
+            self.job = self.last_prompt = None
             return self.state()
 
     def save(self):

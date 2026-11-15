@@ -25,6 +25,7 @@ Safety rules (the same as in the chat screen):
 import json
 import os
 
+from . import archive as ARC
 from . import emotion as EMO
 from . import identity as ID
 from . import person as PER
@@ -121,7 +122,7 @@ def _from_core(core, version):
 
 
 def load(path=None, *, ckpt=None, tokenizer=None, version=None, memory=None, mood=None, person=None, system=None,
-         max_new=120, temperature=0.8, top_k=40, seed=0, fast=True, memory_tokens=None, person_tokens=None):
+         max_new=120, temperature=0.8, top_k=40, seed=0, fast=True, memory_tokens=None, person_tokens=None, archive=None):
     """Loads an AI. `path` is an identity core folder (or leave it out and give ckpt= and tokenizer=). Anything you pass overrides the core.
 
     memory / mood / person: file paths. With a core they default to the core's own files. fast=False uses the plain generator (slower, same answers).
@@ -151,6 +152,7 @@ def load(path=None, *, ckpt=None, tokenizer=None, version=None, memory=None, moo
         if not ckpt or not tokenizer:
             raise RuntimeProblem("load() needs an identity core folder, or both ckpt= and tokenizer=.")
         store = MemoryStore(memory) if memory else None
+        arch = ARC.ChatArchive(archive) if archive else None
         mood_obj = tagger = card = None
         if mood:
             mood_obj = EMO.Mood(mood, baseline=core.baseline() if core else (0.1, 0.0))
@@ -163,7 +165,7 @@ def load(path=None, *, ckpt=None, tokenizer=None, version=None, memory=None, moo
         if got is None:
             raise RuntimeProblem("Cannot read the checkpoint %s." % ckpt)
         params, cfg, tok = got[0], Config.from_dict(got[2]["cfg"]), Tokenizer.load(tokenizer)
-    except (ID.IdentityProblem, PERS.PersonaProblem, PER.PersonProblem, EMO.EmotionProblem, OSError, ValueError, KeyError) as e:
+    except (ARC.ArchiveProblem, ID.IdentityProblem, PERS.PersonaProblem, PER.PersonProblem, EMO.EmotionProblem, OSError, ValueError, KeyError) as e:
         raise RuntimeProblem(str(e))
     except Exception as e:                                                   # memory/lineage problems have their own classes
         if type(e).__name__ in ("MemoryProblem", "LineageProblem"):
@@ -173,16 +175,16 @@ def load(path=None, *, ckpt=None, tokenizer=None, version=None, memory=None, moo
         count = lambda text: len(tok.encode(text, allow_special=False))
         system, _left_out = ID.system_line(core.sections, count, max(((cfg.ctx - max_new) // 2) - 4, 8))
     session = _session(params, cfg, tok, system, max_new, temperature, top_k, seed, fast, store, mood_obj, tagger, card, memory_tokens, person_tokens,
-                       core, personas, PRO.Proposals(core, memory_path=memory, person_path=person) if core is not None else None)
+                       core, personas, PRO.Proposals(core, memory_path=memory, person_path=person) if core is not None else None, arch)
     return AI(session, core=core, personas=personas, tok=tok, cfg=cfg, version=name)
 
 
-def _session(params, cfg, tok, system, max_new, temperature, top_k, seed, fast, store, mood_obj, tagger, card, memory_tokens, person_tokens, core, personas, proposals):
+def _session(params, cfg, tok, system, max_new, temperature, top_k, seed, fast, store, mood_obj, tagger, card, memory_tokens, person_tokens, core, personas, proposals, archive=None):
     sampler = sample_ids_cached if fast else sample_ids
     return ChatSession(tok, cfg.ctx, lambda ids, **kw: sampler(params, cfg, ids, **kw), system=system, save_dir=".",
                        settings={"max_new": max_new, "temperature": temperature, "top_k": top_k}, seed=seed,
                        memory=store, memory_tokens=memory_tokens, mood=mood_obj, tagger=tagger, person=card, person_tokens=person_tokens,
-                       identity=core, personas=personas, proposals=proposals)
+                       identity=core, personas=personas, proposals=proposals, archive=archive)
 
 
 class PackagePersonas:
