@@ -1,4 +1,4 @@
-// PersonaLM UI (stages U0, U1a, U1b, U2a): shell, theme, toasts, shortcuts, Settings/Privacy page, design kit.
+// PersonaLM UI (stages U0 to U2a): shell, theme, toasts, shortcuts, Settings/Privacy page, design kit.
 // Everything is built with textContent / createElement (no innerHTML with data), and nothing is loaded from outside this server.
 
 import { chatPage } from './chat.js';

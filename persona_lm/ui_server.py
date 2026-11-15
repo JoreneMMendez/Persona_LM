@@ -14,10 +14,11 @@ What this file guarantees (each point has a test in tests/test_ui_u0.py):
   * Project files are only touched through PathGuard: inside the project folder, not through a link out of it, and never
     data_msgr/private/ or any folder called private (or the raw Messenger exports). Stage U0 only checks that a few known
     names exist; it never lists or reads chat data.
-  * There is NO route that runs a command, approves a proposal or changes the identity. The ONLY routes that write memory are the owner-side
-    /api/memory/add|edit|forget|apply routes of the Memory page (U2a, ui_memory.py): no chat route and no model text can reach them. Later stages add routes
+  * There is NO route that runs a command, approves a proposal, changes the identity or writes memory. Later stages add routes
     one at a time; the typed confirmations stay in the terminal unless a stage says otherwise and was approved by the owner.
     U1a adds the chat routes (/api/chat/...; see ui_chat.py): a message is sent with say(), never handle(), so "/approve 1" is only text.
+    U2a adds the memory routes (/api/memory/...; see ui_memory.py) for the owner at the keyboard: they touch memory.json only, through
+    MemoryStore. Forget needs its id typed back; maintenance applies only the plan that was previewed. Chat text never reaches them.
   * Nothing the owner types is logged by this server (the per-request log line is switched off).
 """
 import hmac
@@ -33,7 +34,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from . import __version__
 from .ui_chat import ChatHub, ChatProblem
-from .ui_memory import MemoryHub, MemProblem
+from .ui_memory import MemoryHub, MemoryHubProblem
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(HERE, "ui_static")
@@ -303,17 +304,31 @@ def make_handler(state):
                 if path in ("/api/chat/sources", "/api/chat/state", "/api/chat/poll"):
                     return self._chat_get(path, url)
                 if path in MEMORY_GET:
-                    try:
-                        if path == "/api/memory/plan":
-                            return self._json(200, {"ok": True, **state.memory.plan()})
-                        query = {k: v[0] for k, v in parse_qs(url.query).items()}
-                        return self._json(200, {"ok": True, **state.memory.list(query)})
-                    except (MemProblem, UIProblem) as e:
-                        return self._error(getattr(e, "code", 400), str(e))
+                    return self._memory(path, url, None)
                 return self._error(404, "no such route")
             if not self._gate(False):
                 return
             self._error(404, "not found")
+
+        def _memory(self, path, url, body):
+            """All /api/memory/ routes. The owner's page calls these; the chat route cannot (see ui_memory.py)."""
+            h = state.memory
+            try:
+                if path == "/api/memory/list":
+                    qs = parse_qs(url.query)
+                    one = lambda k, d="": qs.get(k, [d])[0]
+                    try:
+                        limit, offset = int(one("limit", "100")), int(one("offset", "0"))
+                    except ValueError:
+                        raise MemoryHubProblem("limit and offset must be whole numbers.")
+                    out = h.list(q=one("q"), status=one("status", "all"), sort=one("sort", "newest"), pinned=one("pinned") == "1", limit=limit, offset=offset)
+                elif path == "/api/memory/plan":
+                    out = h.plan()
+                else:
+                    out = {"/api/memory/add": h.add, "/api/memory/edit": h.edit, "/api/memory/forget": h.forget, "/api/memory/maintain": h.maintain}[path](body)
+                return self._json(200, {"ok": True, **out})
+            except MemoryHubProblem as e:
+                return self._error(e.code, str(e))
 
         def _chat_get(self, path, url):
             try:
@@ -376,12 +391,7 @@ def make_handler(state):
                 except ChatProblem as e:
                     return self._error(e.code, str(e))
             if path in MEMORY_POST:
-                try:
-                    m = state.memory
-                    out = {"/api/memory/add": m.add, "/api/memory/edit": m.edit, "/api/memory/forget": m.forget, "/api/memory/apply": m.apply}[path](body)
-                    return self._json(200, {"ok": True, **out})
-                except (MemProblem, UIProblem) as e:
-                    return self._error(getattr(e, "code", 400), str(e))
+                return self._memory(path, urlsplit(self.path), body)
             return self._error(404, "no such route")
 
         def do_PUT(self):
@@ -395,7 +405,7 @@ def make_handler(state):
 CHAT_GET = ["/api/chat/poll", "/api/chat/sources", "/api/chat/state"]
 CHAT_POST = ["/api/chat/count", "/api/chat/load", "/api/chat/reset", "/api/chat/save", "/api/chat/send", "/api/chat/settings", "/api/chat/stop"]
 MEMORY_GET = ["/api/memory/list", "/api/memory/plan"]
-MEMORY_POST = ["/api/memory/add", "/api/memory/apply", "/api/memory/edit", "/api/memory/forget"]
+MEMORY_POST = ["/api/memory/add", "/api/memory/edit", "/api/memory/forget", "/api/memory/maintain"]
 ROUTES = {"GET": ["/", "/api/health", "/api/info", "/api/privacy"] + CHAT_GET + MEMORY_GET + sorted(STATIC), "POST": ["/api/ping"] + CHAT_POST + MEMORY_POST}
 
 

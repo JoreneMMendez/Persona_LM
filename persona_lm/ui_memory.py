@@ -1,29 +1,32 @@
-"""The Memory page of the web UI (stage U2a): list, search, add, edit, pin, forget, and the maintenance plan with a preview.
+"""Stage U2a: the memory routes of the web UI (list, search, add, edit, pin, forget, maintenance preview + apply).
 
-Owner-side only. These routes are for the person at the keyboard. The chat routes (ui_chat.py) never touch memory: a chat
-message goes through say(), so "/remember ..." typed in the chat is only text and writes nothing.
-
-  * One file: memory.json in the project folder (through PathGuard). It is read fresh for every request, so a change made
-    by the terminal or the chat program is seen at once, and a save that would overwrite a newer file is refused (MemoryStore does that).
-  * Every change is logged (action + ids only, never the memory text) and saved the same way the command line does it.
-  * `forget` needs the memory id sent back as `confirm`, and removes the old text from the backup file too (as `/forget` does).
-  * Maintenance is two steps: GET /api/memory/plan shows what WOULD happen and gives a plan_id; POST /api/memory/apply only
-    carries out a plan whose id still matches a fresh plan. If memory changed in between, nothing is applied.
+Rules (each has a test in tests/test_ui_u2a.py):
+  * Only the file memory.json in the project folder, opened through PathGuard. Nothing else is read or written.
+  * These routes are for the OWNER at the keyboard (token + Host + Origin checks, like every /api route). The chat route still uses
+    say(), so text the model writes can never reach them. No model text is ever passed to any function in this file.
+  * Every change goes through MemoryStore (same validation, atomic save, conflict check as the typed commands) and is logged
+    without the text (memory.log.jsonl), like the CLI does.
+  * forget needs the id typed back as `confirm` (the page sends it after its two-step button) and, like the CLI, saves with
+    keep_backup=False so the old text does not survive in memory.prev.json.
+  * Maintenance is a PLAN first. Applying needs the plan_id of the preview; if memory changed since, nothing is applied.
 """
 import hashlib
 import json
 import re
 import threading
+import time
 
 from . import memory as MEM
 
-MAX_LIST = 500
-STATUS_CHOICES = ("all",) + MEM.STATUSES
-SORTS = ("recent", "oldest", "strength", "importance")
-_ID = re.compile(r"^m\d{1,9}$")
+DEFAULT_LIMIT = 100
+MAX_LIMIT = 500
+MAX_QUERY = 200
+STATUS_FILTERS = ("all",) + MEM.STATUSES
+SORTS = ("newest", "oldest", "strength", "importance")
+_ID = re.compile(r"^m\d{1,8}$")
 
 
-class MemProblem(Exception):
+class MemoryHubProblem(Exception):
     """A plain sentence for the page. code is the HTTP status to answer with."""
 
     def __init__(self, msg, code=400):
@@ -31,11 +34,9 @@ class MemProblem(Exception):
         self.code = code
 
 
-def _num(v, name):
+def _number(v, what):
     if isinstance(v, bool) or not isinstance(v, (int, float)):
-        raise MemProblem("%s must be a number from 0 to 1." % name)
-    if not 0 <= float(v) <= 1:
-        raise MemProblem("%s must be a number from 0 to 1 (0.5 is normal, 0.9 is very important)." % name)
+        raise MemoryHubProblem("%s must be a number from 0 to 1." % what)
     return float(v)
 
 
@@ -44,179 +45,210 @@ class MemoryHub:
         self.guard = guard
         self.lock = threading.Lock()
 
-    # ------------------------------------------------------------------ helpers
+    # ---------------------------------------------------------------- helpers
+    def _clean(self, e):
+        return str(e).replace(self.guard.root, ".")                 # no absolute folder names in answers
+
     def _path(self):
-        return self.guard.resolve("memory.json")
-
-    def _store(self):
         try:
-            return MEM.MemoryStore(self._path())
-        except MEM.MemoryProblem as e:
-            raise MemProblem(str(e), 409)
+            return self.guard.resolve("memory.json")
+        except Exception as e:
+            raise MemoryHubProblem(self._clean(e), 403)
 
-    def _out(self, store, mem):
-        now = store.clock()
-        row = {"id": mem["id"], "text": mem["text"], "status": mem["status"], "emotion": mem["emotion"], "importance": mem["importance"],
-               "strength": round(store.strength(mem, now), 3), "pinned": bool(mem.get("pinned")), "uses": mem.get("uses", 0),
-               "timestamp": mem["timestamp"], "last_used": mem["last_used"], "source": mem.get("source", ""),
-               "nodes": [{"id": n, "name": store.nodes[n]["name"], "kind": store.nodes[n]["kind"]} for n in mem["nodes"] if n in store.nodes]}
-        for k in ("summary_of", "merged_into", "archived_into"):
-            if mem.get(k):
-                row[k] = mem[k]
-        return row
+    def _open(self):
+        """(store, file_exists). A missing file is an empty memory; it is created by the first add."""
+        import os
+        path = self._path()
+        try:
+            return MEM.MemoryStore(path), os.path.exists(path)
+        except MEM.MemoryProblem as e:
+            raise MemoryHubProblem(self._clean(e), 400)
+
+    def _save(self, store, action, ids, forget=False, note=None):
+        try:
+            store.save(keep_backup=not forget)
+            store.log(action, ids, note=note)
+        except MEM.MemoryConflict as e:
+            raise MemoryHubProblem(self._clean(e), 409)
+        except MEM.MemoryProblem as e:
+            raise MemoryHubProblem(self._clean(e), 400)
+        except OSError as e:
+            raise MemoryHubProblem("Could not write the memory file: " + self._clean(e), 500)
 
     @staticmethod
-    def _mid(body):
-        mid = body.get("id")
-        if not isinstance(mid, str) or not _ID.match(mid.strip().lower()):
-            raise MemProblem("Give the memory id, like m0003.")
-        return mid.strip().lower()
+    def _mid(v):
+        if not isinstance(v, str) or not _ID.match(v.strip().lower()):
+            raise MemoryHubProblem("Give a memory id like m0003.")
+        return v.strip().lower()
 
-    def _run(self, fn):
-        try:
-            with self.lock:
-                return fn()
-        except MEM.MemoryConflict as e:
-            raise MemProblem(str(e), 409)
-        except MEM.MemoryProblem as e:
-            raise MemProblem(str(e), 400)
+    @staticmethod
+    def _item(store, mem, now):
+        return {"id": mem["id"], "text": mem["text"], "emotion": mem["emotion"], "importance": mem["importance"],
+                "strength": round(store.strength(mem, now), 3), "pinned": bool(mem.get("pinned")), "status": mem["status"],
+                "uses": mem.get("uses", 0), "timestamp": mem["timestamp"], "last_used": mem.get("last_used"), "source": mem.get("source", ""),
+                "nodes": [{"name": store.nodes[n]["name"], "kind": store.nodes[n]["kind"]} for n in mem["nodes"] if n in store.nodes],
+                "summary_of": list(mem.get("summary_of") or []), "merged_into": mem.get("merged_into")}
 
-    # ------------------------------------------------------------------ read
-    def list(self, q):
-        text = q.get("q", "")
-        status = q.get("status", "all")
-        sort = q.get("sort", "recent")
-        if len(text) > 200:
-            raise MemProblem("The search text is too long (200 characters at most).")
-        if status not in STATUS_CHOICES:
-            raise MemProblem("status must be one of: %s." % ", ".join(STATUS_CHOICES))
+    # ---------------------------------------------------------------- list
+    def list(self, q="", status="all", sort="newest", pinned=False, limit=DEFAULT_LIMIT, offset=0):
+        if not isinstance(q, str) or len(q) > MAX_QUERY:
+            raise MemoryHubProblem("The search text is too long (limit %d characters)." % MAX_QUERY)
+        if status not in STATUS_FILTERS:
+            raise MemoryHubProblem("status must be one of: " + ", ".join(STATUS_FILTERS))
         if sort not in SORTS:
-            raise MemProblem("sort must be one of: %s." % ", ".join(SORTS))
-        try:
-            limit = int(q.get("limit", 100))
-            offset = int(q.get("offset", 0))
-        except ValueError:
-            raise MemProblem("limit and offset must be whole numbers.")
-        if not 1 <= limit <= MAX_LIST or offset < 0:
-            raise MemProblem("limit must be 1 to %d and offset 0 or more." % MAX_LIST)
-
-        def go():
-            path = self._path()
-            import os
-            exists = os.path.exists(path)
-            store = self._store()
-            now = store.clock()
+            raise MemoryHubProblem("sort must be one of: " + ", ".join(SORTS))
+        if not (isinstance(limit, int) and 1 <= limit <= MAX_LIMIT and isinstance(offset, int) and offset >= 0):
+            raise MemoryHubProblem("limit must be 1 to %d and offset 0 or more." % MAX_LIMIT)
+        with self.lock:
+            store, exists = self._open()
+            now = time.time()
             mems = list(store.memories.values())
             counts = {s: sum(1 for m in mems if m["status"] == s) for s in MEM.STATUSES}
-            words = text.casefold().split()
-            if status != "all":
-                mems = [m for m in mems if m["status"] == status]
-            if words:
-                def hay(m):
-                    return " ".join([m["id"], m["text"], m["emotion"]] + [store.nodes[n]["name"] for n in m["nodes"] if n in store.nodes]).casefold()
-                mems = [m for m in mems if all(w in hay(m) for w in words)]
-            key = {"recent": lambda m: (m["timestamp"], m["id"]), "oldest": lambda m: (m["timestamp"], m["id"]),
-                   "strength": lambda m: (store.strength(m, now), m["id"]), "importance": lambda m: (m["importance"], m["id"])}[sort]
-            mems.sort(key=key, reverse=(sort != "oldest"))
-            shown = mems[offset:offset + limit]
-            return {"file": "memory.json", "exists": exists, "total": len(store.memories), "counts": counts, "matches": len(mems), "offset": offset,
-                    "memories": [self._out(store, m) for m in shown], "overview": store.overview(now), "emotions": sorted({m["emotion"] for m in store.memories.values()}),
-                    "kinds": list(MEM.KINDS), "max_text": MEM.MAX_TEXT}
-        return self._run(go)
+            words = [w.casefold() for w in q.split() if w.strip()]
+            out = []
+            for m in mems:
+                if status != "all" and m["status"] != status:
+                    continue
+                if pinned and not m.get("pinned"):
+                    continue
+                if words:
+                    hay = (m["text"] + " " + m["id"] + " " + m["emotion"] + " " + " ".join(store.nodes[n]["name"] for n in m["nodes"] if n in store.nodes)).casefold()
+                    if not all(w in hay for w in words):
+                        continue
+                out.append(m)
+            keys = {"newest": lambda m: (m["timestamp"], m["id"]), "oldest": lambda m: (m["timestamp"], m["id"]),
+                    "strength": lambda m: (store.strength(m, now), m["id"]), "importance": lambda m: (m["importance"], m["id"])}
+            out.sort(key=keys[sort], reverse=sort != "oldest")
+            page = out[offset:offset + limit]
+            emotions = sorted({m["emotion"] for m in mems})
+            return {"exists": exists, "items": [self._item(store, m, now) for m in page], "matched": len(out), "total": len(mems),
+                    "counts": counts, "nodes": len(store.nodes), "emotions": emotions, "pinned": sum(1 for m in mems if m.get("pinned")),
+                    "offset": offset, "limit": limit}
 
-    def _plan(self, store):
-        plan = store.plan_maintenance()
-        pid = hashlib.sha256(json.dumps(plan, sort_keys=True).encode("utf-8")).hexdigest()[:16]
-        return plan, pid
-
-    def plan(self):
-        """What maintenance WOULD do. Changes nothing."""
-        def go():
-            store = self._store()
-            plan, pid = self._plan(store)
-
-            def brief(mid):
-                m = store.memories[mid]
-                return {"id": mid, "text": m["text"][:240], "strength": round(store.strength(m), 3), "importance": m["importance"]}
-            out = {"plan_id": pid, "fade": [brief(i) for i in plan["fade"]], "revive": [brief(i) for i in plan["revive"]],
-                   "duplicates": [{"keep": brief(k), "drop": brief(d), "similarity": s} for k, d, s in plan["duplicates"]],
-                   "summaries": [{"node": store.nodes[s["node"]]["name"], "count": len(s["ids"]), "ids": s["ids"], "text": s["text"][:400]} for s in plan["summaries"]]}
-            out["empty"] = not (plan["fade"] or plan["revive"] or plan["duplicates"] or plan["summaries"])
-            return out
-        return self._run(go)
-
-    # ------------------------------------------------------------------ write (owner only)
+    # ---------------------------------------------------------------- add / edit / forget
     def add(self, body):
         text = body.get("text")
         if not isinstance(text, str):
-            raise MemProblem("Write what to remember.")
+            raise MemoryHubProblem("Write what to remember.")
         emotion = body.get("emotion", "neutral")
         if not isinstance(emotion, str):
-            raise MemProblem("The emotion tag must be one word, e.g. joy.")
-        importance = _num(body.get("importance", 0.5), "Importance")
+            raise MemoryHubProblem("The emotion tag must be one lowercase word.")
+        importance = _number(body.get("importance", 0.5), "Importance")
         pinned = body.get("pinned", False)
         if not isinstance(pinned, bool):
-            raise MemProblem("pinned must be true or false.")
-
-        def go():
-            store = self._store()
-            mem = store.add(text, emotion=emotion, importance=importance, source="owner", pinned=pinned)
-            store.log("add", [mem["id"]])
-            store.save()
-            return {"memory": self._out(store, mem)}
-        return self._run(go)
+            raise MemoryHubProblem("pinned must be true or false.")
+        with self.lock:
+            store, _ = self._open()
+            try:
+                mem = store.add(text, emotion=emotion or "neutral", importance=importance, source="owner", pinned=pinned)
+            except MEM.MemoryProblem as e:
+                raise MemoryHubProblem(self._clean(e), 400)
+            self._save(store, "add", [mem["id"]])
+            return {"memory": self._item(store, mem, time.time())}
 
     def edit(self, body):
-        mid = self._mid(body)
-        has = [k for k in ("text", "emotion", "importance", "pinned") if k in body]
-        if not has:
-            raise MemProblem("Nothing to change: send text, emotion, importance or pinned.")
-        if "text" in body and not isinstance(body["text"], str):
-            raise MemProblem("The text must be a string.")
-        if "emotion" in body and not isinstance(body["emotion"], str):
-            raise MemProblem("The emotion tag must be one word, e.g. joy.")
-        if "pinned" in body and not isinstance(body["pinned"], bool):
-            raise MemProblem("pinned must be true or false.")
-        imp = _num(body["importance"], "Importance") if "importance" in body else None
-
-        def go():
-            store = self._store()
-            mem = store.get(mid)
-            store.edit(mid, text=body.get("text"), emotion=body.get("emotion"))
-            if imp is not None or "pinned" in body:
-                store.set_importance(mid, mem["importance"] if imp is None else imp, body.get("pinned"))
-            store.log("edit" if ("text" in body or "emotion" in body) else "set", [mid])
-            store.save()
-            return {"memory": self._out(store, mem)}
-        return self._run(go)
+        mid = self._mid(body.get("id"))
+        fields = {k: body[k] for k in ("text", "emotion", "importance", "pinned") if k in body}
+        if not fields:
+            raise MemoryHubProblem("Nothing to change: send text, emotion, importance or pinned.")
+        if "pinned" in fields and not isinstance(fields["pinned"], bool):
+            raise MemoryHubProblem("pinned must be true or false.")
+        if "emotion" in fields and not isinstance(fields["emotion"], str):
+            raise MemoryHubProblem("The emotion tag must be one lowercase word.")
+        if "importance" in fields:
+            _number(fields["importance"], "Importance")
+        if "text" in fields and not isinstance(fields["text"], str):
+            raise MemoryHubProblem("The text must be a string.")
+        with self.lock:
+            store, exists = self._open()
+            if not exists:
+                raise MemoryHubProblem("There is no memory file yet.", 404)
+            try:
+                mem = store.get(mid)
+            except MEM.MemoryProblem:
+                raise MemoryHubProblem("There is no memory %s." % mid, 404)
+            nodes_backup = json.loads(json.dumps(store.nodes))
+            before = json.loads(json.dumps(mem))
+            try:
+                if "text" in fields:
+                    text = " ".join(fields["text"].split())
+                    if not text:
+                        raise MEM.MemoryProblem("There is nothing to remember: the text is empty.")
+                    if len(text) > MEM.MAX_TEXT:
+                        raise MEM.MemoryProblem("That memory is %d characters; the limit is %d." % (len(text), MEM.MAX_TEXT))
+                    _, old_auto = store._resolve_links(mem["text"])               # links the OLD text produced by itself ...
+                    extra = [n for n in mem["nodes"] if n not in old_auto]       # ... so links added by hand (CLI --node) are kept
+                    clean, ids = store._resolve_links(text)
+                    mem["text"] = clean
+                    mem["nodes"] = ids + [n for n in extra if n not in ids]
+                if "emotion" in fields:
+                    emo = fields["emotion"].strip().lower() or "neutral"
+                    if not MEM._EMOTION.match(emo):
+                        raise MEM.MemoryProblem("The emotion tag must be one lowercase word (letters, digits, '-'), up to 24 characters, e.g. joy, sadness, stress.")
+                    mem["emotion"] = emo
+                if "importance" in fields or "pinned" in fields:
+                    store.set_importance(mid, fields.get("importance", mem["importance"]), fields.get("pinned"))
+                store.prune_nodes()
+            except MEM.MemoryProblem as e:
+                store.data["nodes"] = nodes_backup                                # a rejected edit leaves nothing half done
+                mem.clear(); mem.update(before)
+                raise MemoryHubProblem(self._clean(e), 400)
+            self._save(store, "set", [mid])
+            return {"memory": self._item(store, mem, time.time())}
 
     def forget(self, body):
-        mid = self._mid(body)
+        mid = self._mid(body.get("id"))
         if body.get("confirm") != mid:
-            raise MemProblem("To forget a memory for good, send its id again as confirm (the page asks you to press the button twice).")
-
-        def go():
-            store = self._store()
+            raise MemoryHubProblem("To delete a memory for good, send its id again as confirm (the page does this after the second click).")
+        with self.lock:
+            store, exists = self._open()
+            if not exists:
+                raise MemoryHubProblem("There is no memory file yet.", 404)
+            try:
+                store.get(mid)
+            except MEM.MemoryProblem:
+                raise MemoryHubProblem("There is no memory %s." % mid, 404)
             store.forget(mid)
-            store.log("forget", [mid])
-            store.save(keep_backup=False)            # the old text must not survive in memory.prev.json
-            return {"forgotten": mid, "total": len(store.memories)}
-        return self._run(go)
+            self._save(store, "forget", [mid], forget=True)
+            return {"forgotten": mid}
 
-    def apply(self, body):
+    # ---------------------------------------------------------------- maintenance
+    @staticmethod
+    def _plan_id(plan):
+        raw = json.dumps({"fade": plan["fade"], "revive": plan["revive"], "duplicates": [[a, b] for a, b, _ in plan["duplicates"]],
+                          "summaries": [[s["node"], s["ids"]] for s in plan["summaries"]]}, sort_keys=True)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+    def plan(self):
+        with self.lock:
+            store, exists = self._open()
+            if not exists:
+                raise MemoryHubProblem("There is no memory file yet, so there is nothing to tidy.", 404)
+            plan = store.plan_maintenance()
+            text = lambda mid: store.memories[mid]["text"]
+            return {"plan_id": self._plan_id(plan),
+                    "fade": [{"id": i, "text": text(i)} for i in plan["fade"]],
+                    "revive": [{"id": i, "text": text(i)} for i in plan["revive"]],
+                    "duplicates": [{"keep": a, "drop": b, "similarity": s, "keep_text": text(a), "drop_text": text(b)} for a, b, s in plan["duplicates"]],
+                    "summaries": [{"node": store.nodes[s["node"]]["name"], "ids": s["ids"], "text": s["text"]} for s in plan["summaries"]],
+                    "empty": not (plan["fade"] or plan["revive"] or plan["duplicates"] or plan["summaries"])}
+
+    def maintain(self, body):
         pid = body.get("plan_id")
         if not isinstance(pid, str) or not pid:
-            raise MemProblem("Preview the plan first, then apply it with its plan_id.")
-
-        def go():
-            store = self._store()
-            plan, now_id = self._plan(store)
-            if pid != now_id:
-                raise MemProblem("Memory changed since that preview. Nothing was applied. Preview again.", 409)
+            raise MemoryHubProblem("Preview the plan first, then apply it with its plan_id.")
+        with self.lock:
+            store, exists = self._open()
+            if not exists:
+                raise MemoryHubProblem("There is no memory file yet.", 404)
+            plan = store.plan_maintenance()
             if not (plan["fade"] or plan["revive"] or plan["duplicates"] or plan["summaries"]):
-                raise MemProblem("There is nothing to do.")
-            done = store.apply_maintenance(plan)
-            store.log("maintain", [], note=json.dumps(done))
-            store.save()
+                raise MemoryHubProblem("Nothing to tidy right now.")
+            if pid != self._plan_id(plan):
+                raise MemoryHubProblem("Memory changed since the preview. Nothing was applied: preview again.", 409)
+            try:
+                done = store.apply_maintenance(plan)
+            except MEM.MemoryProblem as e:
+                raise MemoryHubProblem(self._clean(e), 400)
+            self._save(store, "maintain", [], note=json.dumps(done))
             return {"done": done}
-        return self._run(go)

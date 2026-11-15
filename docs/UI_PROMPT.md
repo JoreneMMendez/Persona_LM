@@ -1,7 +1,7 @@
-# Web UI prompt (U0, U1a, U1b, U2a done, then 11 small stages: U2b ... U7a, U7b)
+# Web UI prompt (U0, U1a, U1b, U2a done, then 12 small stages: U2a, U2b ... U7a, U7b)
 
 Paste everything in the block below into a NEW AI session together with the newest project zip and `HANDOFF.md`.
-Change the last line (`Start with stage: U2b`) to the stage you want: U1a, U1b, U2a, U2b ... U7a, U7b. ONE stage per session.
+Change the last line (`Start with stage: U2a`) to the stage you want: U1a, U1b, U2a, U2b ... U7a, U7b. ONE stage per session.
 Status of each stage: HANDOFF.md, section 7 (rows U0 and U1a-U7b). U0, U1a, U1b and U2a are built (2026-11-15); the rest follow the list below.
 Why 14 small stages: the first plan had 7 big ones (U1-U7) and a session ran out of credit before it finished. Each old stage is now cut in two (a and b), so each one finishes inside one session.
 
@@ -52,5 +52,5 @@ FOR EACH STAGE
 3. Update HANDOFF.md (short, as above).
 4. End with the ONE command I should run next, and what I should see.
 
-Start with stage: U2b
+Start with stage: U1a
 ```
