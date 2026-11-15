@@ -285,6 +285,164 @@ class LanguageData(unittest.TestCase):
         self.assertTrue(a.mix)
 
 
+class Forms(unittest.TestCase):
+    """The boxed questions and confirmations (used on a real terminal)."""
+
+    def corpus(self):
+        return [it for it in M.ITEMS if it["cmd"] == "corpus"][0]
+
+    def form(self, item=None, found=None, width=100):
+        return M.Form(item or self.corpus(), found or {"runs": [], "data": [], "toks": [], "torch": False}, FakeTTY(), color=False, width=width, unicode_ok=True)
+
+    def drive(self, form, *ks):
+        out = None
+        for k in ks:
+            out = form.key(k)
+        return out
+
+    def test_defaults_then_start_builds_the_normal_command(self):
+        f = self.form()
+        self.assertEqual(self.drive(f, "enter", "enter", "enter", "enter"), "done")
+        self.assertEqual(M.build_argv(f.item, f.answers()), ["corpus", "--lang", "en,tl,ceb,taglish", "--mode", "all"])
+
+    def test_typing_replaces_the_shown_answer_and_right_arrow_edits_it(self):
+        f = self.form()
+        self.drive(f, *"taglish")
+        self.assertEqual(f.val[0], "taglish")
+        g = self.form()
+        self.drive(g, "right", ",", "x")
+        self.assertEqual(g.val[0], "en,tl,ceb,taglish,x")
+        self.drive(g, "backspace")
+        self.assertEqual(g.val[0], "en,tl,ceb,taglish,")
+
+    def test_backspace_on_an_untouched_answer_clears_it(self):
+        f = self.form()
+        self.drive(f, "backspace")
+        self.assertEqual(f.val[0], "")
+
+    def test_choices_cycle_and_a_letter_picks(self):
+        f = self.form()
+        self.drive(f, "enter", "right")
+        self.assertEqual(f.val[1], "clean")
+        self.drive(f, "right")
+        self.assertEqual(f.val[1], "all")
+        self.drive(f, "left")
+        self.assertEqual(f.val[1], "clean")
+        self.drive(f, "enter", "y")
+        self.assertEqual(f.val[2], "yes")
+        self.assertEqual(M.build_argv(f.item, f.answers())[-1], "--mix")
+
+    def test_a_bad_answer_stays_put_and_says_why(self):
+        f = self.form()
+        self.drive(f, *"french")
+        self.drive(f, "enter")
+        self.assertEqual(f.focus, 0)
+        self.assertIn("choose at least one of", f.msg)
+        self.assertIn("choose at least one of", "\n".join(f.lines()))
+        self.drive(f, "clear", *"ceb")
+        self.drive(f, "enter")
+        self.assertEqual(f.focus, 1)
+        self.assertEqual(f.msg, "")
+
+    def test_start_row_checks_everything_and_jumps_to_the_first_problem(self):
+        f = self.form()
+        self.drive(f, "clear", "down", "down", "down")
+        self.assertEqual(f.focus, 3)
+        self.assertIsNone(f.key("enter"))
+        self.assertEqual(f.focus, 0)
+        self.assertIn("is needed", f.msg)
+
+    def test_esc_goes_back(self):
+        self.assertEqual(self.drive(self.form(), "esc"), "cancel")
+
+    def test_untouched_answers_follow_earlier_ones(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_project(d)
+            f = self.form(M.ITEMS[0], M.scan(d))
+            self.assertEqual(f.val[2], "s30m")                         # size of the found run
+            self.drive(f, *"zzz")                                       # a run folder that does not exist
+            self.assertEqual(f.val[2], "s10m")
+            self.drive(f, "enter", "enter", "right")                    # touch the size: it now stays
+            self.assertEqual(f.touched[2], True)
+
+    def test_every_line_has_the_same_width_and_fits_the_window(self):
+        for w in (80, 100, 140):
+            f = self.form(width=w)
+            for line in f.lines()[2:]:
+                self.assertEqual(len(line), len(f.lines()[2]), w)
+            self.assertLessEqual(len(f.lines()[2]), w - 1)
+
+    def test_run_draws_and_cleans_up_after_itself(self):
+        f = self.form()
+        ks = iter(["enter", "enter", "enter", "enter"])
+        self.assertTrue(f.run(lambda: next(ks)))
+        out = f.out.getvalue()
+        self.assertIn("Questions", out)
+        self.assertTrue(out.rstrip().endswith("\x1b[?25h"))
+        self.assertEqual(f.n, 0)
+
+    def test_ctrl_c_in_the_form_goes_back(self):
+        def boom():
+            raise KeyboardInterrupt
+        self.assertFalse(self.form().run(boom))
+
+    def test_confirm_strict_needs_a_deliberate_y(self):
+        c = lambda strict: M.Confirm("t", ["line"], strict, False, FakeTTY(), False, 100)
+        self.assertFalse(c(True).run(keys("enter", "n")))
+        self.assertTrue(c(True).run(keys("enter", "y")))
+        self.assertTrue(c(False).run(keys("enter")))
+        self.assertFalse(c(False).run(keys("esc")))
+
+    def test_confirm_notice_returns_on_any_key(self):
+        self.assertFalse(M.Confirm("t", ["x"], False, True, FakeTTY(), False, 100).run(keys("a")))
+
+    def test_confirm_box_for_taglish_download_and_missing_datasets(self):
+        argv = ["corpus", "--lang", "taglish", "--mode", "clean"]
+        self.assertTrue(M.confirm_box(argv, {}, FakeTTY(), False, 100, keys("y")))
+        self.assertFalse(M.confirm_box(argv, {}, FakeTTY(), False, 100, keys("enter", "n")))
+        orig = M.importlib.util.find_spec
+        M.importlib.util.find_spec = lambda name, *a: None if name == "datasets" else orig(name, *a)
+        try:
+            out = FakeTTY()
+            self.assertFalse(M.confirm_box(["corpus", "--lang", "en", "--mode", "all"], {}, out, False, 100, keys("x")))
+            self.assertIn("pip install datasets", out.getvalue())
+        finally:
+            M.importlib.util.find_spec = orig
+
+    def test_train_confirm_box_says_new_or_continue(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_project(d)
+            out = FakeTTY()
+            self.assertTrue(M.confirm_box(["train", "--run", os.path.join("work3", "run_pre")], M.scan(d), out, False, 100, keys("enter")))
+            self.assertIn("CONTINUE", out.getvalue())
+            out2 = FakeTTY()
+            M.confirm_box(["train", "--run", "brand_new"], M.scan(d), out2, False, 100, keys("n"))
+            self.assertIn("NEW run", out2.getvalue())
+
+    def test_whole_menu_with_boxed_questions(self):
+        with tempfile.TemporaryDirectory() as d:
+            calls = []
+            idx = str(M.ITEMS.index(self.corpus()) + 1)
+            edit = keys("enter", "right", "enter", "enter", "enter", "y")           # languages ok, mode -> clean, mix no, Start, accept licence
+            M.run_menu(d, stream=FakeTTY(), read=keys(idx, "q"), ask=lambda q: "", call=calls.append, width=100, color=False,
+                       interactive=True, forms=True, read_edit=edit)
+            self.assertEqual(calls, [["corpus", "--lang", "en,tl,ceb,taglish", "--mode", "clean"]])
+
+    def test_whole_menu_backing_out_runs_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            calls = []
+            idx = str(M.ITEMS.index(self.corpus()) + 1)
+            M.run_menu(d, stream=FakeTTY(), read=keys(idx, "q"), ask=lambda q: "", call=calls.append, width=100, color=False,
+                       interactive=True, forms=True, read_edit=keys("esc"))
+            self.assertEqual(calls, [])
+
+    def test_edit_keys_are_mapped(self):
+        self.assertEqual([M._edit_plain(c) for c in ("\r", "\x1b", "\t", "\x7f", "\x08", "\x15", "A", "\\", "\x01")],
+                         ["enter", "esc", "tab", "backspace", "backspace", "clear", "A", "\\", ""])
+        with self.assertRaises(KeyboardInterrupt):
+            M._edit_plain("\x03")
+
+
 class Cli(unittest.TestCase):
     def test_menu_subcommand_exists_and_no_arguments_means_menu(self):
         from persona_lm import cli
