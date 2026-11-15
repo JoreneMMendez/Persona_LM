@@ -1,4 +1,4 @@
-"""The local web UI server (stages U0 to U4b). Python standard library only, offline, this computer only.
+"""The local web UI server (stages U0 to U5a). Python standard library only, offline, this computer only.
 
     python -m persona_lm ui                 # opens http://127.0.0.1:8777/ in your browser
     python -m persona_lm ui --port 9000 --no-open --root C:\\path\\to\\project
@@ -37,6 +37,7 @@ from .ui_chat import ChatHub, ChatProblem
 from .ui_data import DataHub, DataProblem
 from .ui_memory import MemoryHub, MemoryHubProblem
 from .ui_mind import MindHub, MindProblem
+from .ui_train import TrainHub, TrainProblem
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(HERE, "ui_static")
@@ -55,6 +56,7 @@ STATIC = {
     "/static/mind.js": ("mind.js", "text/javascript; charset=utf-8"),
     "/static/data.js": ("data.js", "text/javascript; charset=utf-8"),
     "/static/personas.js": ("personas.js", "text/javascript; charset=utf-8"),
+    "/static/training.js": ("training.js", "text/javascript; charset=utf-8"),
     "/static/favicon.svg": ("favicon.svg", "image/svg+xml"),
 }
 INDEX_FILE = "index.html"
@@ -149,7 +151,7 @@ SECTIONS = [
     {"id": "mood", "label": "Mood and Person", "stage": "U2", "icon": "heart", "ready": True},
     {"id": "prompt", "label": "Personas", "stage": "U3", "icon": "layers", "ready": True},
     {"id": "data", "label": "Data", "stage": "U4", "icon": "database", "ready": True},
-    {"id": "training", "label": "Training", "stage": "U5", "icon": "chart"},
+    {"id": "training", "label": "Training", "stage": "U5", "icon": "chart", "ready": True},
     {"id": "identity", "label": "Identity", "stage": "U6", "icon": "shield"},
     {"id": "proposals", "label": "Proposals", "stage": "U6", "icon": "inbox"},
     {"id": "models", "label": "Models and compare", "stage": "U7", "icon": "compare"},
@@ -173,6 +175,7 @@ class UIState:
         self.memory = MemoryHub(self.guard)
         self.mind = MindHub(self.guard)
         self.data = DataHub(self.guard)
+        self.train = TrainHub(self.guard)
 
     def allowed_hosts(self):
         return ("127.0.0.1:%d" % self.port, "localhost:%d" % self.port)
@@ -182,7 +185,7 @@ class UIState:
 
     def info(self):
         return {"name": "PersonaLM", "version": __version__, "project": os.path.basename(self.guard.root) or self.guard.root,
-                "sections": SECTIONS, "stage": "U4b", "uptime_s": int(time.time() - self.started)}
+                "sections": SECTIONS, "stage": "U5a", "uptime_s": int(time.time() - self.started)}
 
     def privacy(self):
         items = []
@@ -321,6 +324,8 @@ def make_handler(state):
                     return self._mind(path, None)
                 if path in DATA_GET:
                     return self._data(path, url)
+                if path in TRAIN_GET:
+                    return self._train(path, url)
                 return self._error(404, "no such route")
             if not self._gate(False):
                 return
@@ -363,6 +368,24 @@ def make_handler(state):
                     out = h.report(qs.get("folder", ["data_chat"])[0], qs.get("size", ["s30m"])[0])
                 return self._json(200, {"ok": True, **out})
             except DataProblem as e:
+                return self._error(e.code, str(e))
+
+        def _train(self, path, url):
+            """Training page, part 1: read only (see ui_train.py). Nothing here starts a program or writes a file."""
+            h = state.train
+            qs = parse_qs(url.query)
+            one = lambda k, d="": qs.get(k, [d])[0]
+            try:
+                if path == "/api/train/plan":
+                    out = h.plan(one("workdir", "work"))
+                elif path == "/api/train/checkpoints":
+                    out = h.checkpoints()
+                elif path == "/api/train/history":
+                    out = h.history(one("run"))
+                else:
+                    out = h.log(one("run"), one("file"))
+                return self._json(200, {"ok": True, **out})
+            except TrainProblem as e:
                 return self._error(e.code, str(e))
 
         def _mind(self, path, body):
@@ -470,8 +493,9 @@ PERSONA_POST = ["/api/personas/use"]
 MIND_GET = ["/api/graph", "/api/mood", "/api/person"]
 DATA_GET = ["/api/data/audit", "/api/data/clean-preview", "/api/data/overview", "/api/data/repeats", "/api/data/report"]
 DATA_POST = ["/api/data/clean-apply"]
+TRAIN_GET = ["/api/train/checkpoints", "/api/train/history", "/api/train/log", "/api/train/plan"]       # U5a: read only
 MIND_POST = ["/api/person/add", "/api/person/edit", "/api/person/remove"]
-ROUTES = {"GET": ["/", "/api/health", "/api/info", "/api/privacy"] + CHAT_GET + PERSONA_GET + MEMORY_GET + MIND_GET + DATA_GET + sorted(STATIC), "POST": ["/api/ping"] + CHAT_POST + PERSONA_POST + MEMORY_POST + MIND_POST + DATA_POST}
+ROUTES = {"GET": ["/", "/api/health", "/api/info", "/api/privacy"] + CHAT_GET + PERSONA_GET + MEMORY_GET + MIND_GET + DATA_GET + TRAIN_GET + sorted(STATIC), "POST": ["/api/ping"] + CHAT_POST + PERSONA_POST + MEMORY_POST + MIND_POST + DATA_POST}
 
 
 def make_server(root=".", host="127.0.0.1", port=DEFAULT_PORT, token=None):

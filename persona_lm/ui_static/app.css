@@ -268,3 +268,13 @@ details.card > summary { cursor: pointer; font-weight: 600; }
 .dstats > div { padding: var(--s3); border: 1px solid var(--line); border-radius: var(--r); background: var(--surface-2); }
 .dstats .num { font-size: 1.25rem; font-weight: 700; display: block; overflow-wrap: anywhere; }
 .dkv { display: flex; gap: var(--s2); flex-wrap: wrap; }
+
+/* ---- Stage U5a: Training page (plan reuses .dstep, tables) */
+.tbl-wrap { overflow-x: auto; max-width: 100%; }
+.tbl { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.tbl th, .tbl td { text-align: left; padding: var(--s2) var(--s3); border-bottom: 1px solid var(--line); vertical-align: top; }
+.tbl thead th { font-size: .78rem; color: var(--ink-3); font-weight: 600; white-space: nowrap; }
+.tbl tbody th { font-weight: 600; overflow-wrap: anywhere; }
+.training h3 { margin: var(--s3) 0 var(--s2); }
+.dstep.todo .dmark { opacity: .8; }
+.training, .training > * { min-width: 0; }

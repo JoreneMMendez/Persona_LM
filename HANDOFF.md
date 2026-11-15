@@ -53,6 +53,7 @@ Rebuilt on 2026-11-15 because the previous copy had been overwritten by notes fr
 - Stage U3b (2026-11-15): web UI personas page and mask switcher. See "Newest state: web UI U3b" below.
 - Stage U4a (2026-11-15): web UI Data page, part 1. See "Newest state: web UI U4a" below.
 - Stage U4b (2026-11-15): web UI Data page, part 2 (the cleaner). See "Newest state: web UI U4b" below.
+- Stage U5a (2026-11-15): web UI Training page, part 1 (plan, checkpoints, run numbers and log; read only). See "Newest state: web UI U5a" below.
 - Tests: 722 after U4b (705 after U4a, 688 after U3b; `python -m unittest discover -s tests`, 2 skipped without PyTorch); `test_handoff.py` needs this file.
 
 ## 6. Known problems
@@ -161,3 +162,12 @@ Next stage: U5a (Training page, part 1). `docs/UI_PROMPT.md` has the plan.
 - PRIVACY NOTE: preview and the default repeats report send counts only. The opt-in text view is the only place chat text reaches the page: refused (403) if stats.json says the import was not anonymised, cut to 30 characters, at most 15 rows, text from the anonymised files only. Say if you want this removed.
 - Limits: the cleaner reads the whole `train.jsonl` into the server's memory (refused over 400 MB; use the terminal then); preview and apply each take a few seconds on a big import. Browser check done once (headless Chromium: preview, repeats text, write, light, dark, 380 px wide, no console errors; the earlier pages were not re-checked).
 - Run: `python -m persona_lm ui --root C:\\Users\\user\\persona_lm_project`, Data > Clean the chats > Preview.
+
+## Newest state: web UI U5a (Training page, part 1), 2026-11-15
+Next stage: U5b (start/stop prepare + train as a background process, live loss chart, rising-val warning, resume). `docs/UI_PROMPT.md` has the plan.
+- Built: sidebar "Training" page, READ ONLY. (1) Pipeline plan for work / work2 / work3: the same steps as `pipeline plan` marked done / NEXT / skipped, the exact command with a Copy button, "decisions confirmed" badge (confirming stays in the terminal), no-project case shows the `pipeline init` command. (2) Checkpoints: every run folder with a ckpt, step / planned steps, model shape, best and last val loss with a "rising" warning (last > best x 1.03), tokenizer fingerprint vs `work/tok.json` (matches / DIFFERENT), file size and date, "only .prev" flag. (3) Details for one run: last step, train loss, best val, a validation table, and the log (numbers from metrics.jsonl, or the tail of a `*.log` file in the run folder).
+- Files: added `persona_lm/ui_train.py` (TrainHub), `ui_static/training.js`, `tests/test_ui_u5a.py` (22 tests). Changed `ui_server.py` (4 GET routes, STATIC, stage name, section ready), `ui_static/app.js`, `app.css`, `tests/test_ui_u0.py` (stage name).
+- Endpoints (GET only, token + Host/Origin on all): `/api/train/plan?workdir=`, `/api/train/checkpoints`, `/api/train/history?run=work3/run_chat2`, `/api/train/log?run=&file=`. No POST route, no process is started, nothing is written (a test checks the module source).
+- Safeguards: only work, work2, work3 and one run level below them (PathGuard); a run is `WORKFOLDER/RUNFOLDER` only; log files must be named `*.log` and sit directly in the run folder (last 64 KB, 200 lines); only the checkpoint's small meta block is read, never the weights, no pickle; the plan does not open the chat files named in project.json (their paths appear only inside the commands).
+- Limits: no loss chart yet (U5b). The trainer prints to the terminal, so a `.log` file exists only if you redirect output (PowerShell: `... | Tee-Object work3\\run_chat2\\train.log`); otherwise the log view is rebuilt from metrics.jsonl. The best step is not kept by the trainer, so a run past its best step can only be retrained. Browser check done once (headless Chromium: light, dark, 380 px wide, no console errors; a stray "null" text and a phone-width sideways scroll were found and fixed).
+- Run: `python -m persona_lm ui --root C:\\Users\\user\\persona_lm_project`, open Training.

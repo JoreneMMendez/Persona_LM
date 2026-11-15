@@ -6,6 +6,7 @@ import { memoryPage } from './memory.js';
 import { moodPage } from './mind.js';
 import { personasPage } from './personas.js';
 import { dataPage } from './data.js';
+import { trainingPage } from './training.js';
 
 const TOKEN = document.querySelector('meta[name="plm-token"]').content;
 
@@ -164,7 +165,7 @@ function designPage(main) {
         h('div', { class: 'row' }, h('button', { class: 'btn', onclick: () => toast('Saved', 'ok') }, 'OK toast'), h('button', { class: 'btn', onclick: () => toast('Something failed', 'bad') }, 'Error toast'))))));
 }
 
-const PAGES = { chat: (main) => chatPage(main), memory: (main) => memoryPage(main), mood: (main) => moodPage(main), prompt: (main) => personasPage(main), data: (main) => dataPage(main), settings: (main) => settingsPage(main), design: (main) => designPage(main) };
+const PAGES = { chat: (main) => chatPage(main), memory: (main) => memoryPage(main), mood: (main) => moodPage(main), prompt: (main) => personasPage(main), data: (main) => dataPage(main), training: (main) => trainingPage(main), settings: (main) => settingsPage(main), design: (main) => designPage(main) };
 
 // ---------- router + nav
 function route() {
