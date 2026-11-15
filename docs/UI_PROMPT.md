@@ -1,8 +1,8 @@
-# Web UI prompt (U0, U1a, U1b, U2a done, then 12 small stages: U2a, U2b ... U7a, U7b)
+# Web UI prompt (U0 to U2b done, then 12 small stages: U2a, U2b ... U7a, U7b)
 
 Paste everything in the block below into a NEW AI session together with the newest project zip and `HANDOFF.md`.
 Change the last line (`Start with stage: U2a`) to the stage you want: U1a, U1b, U2a, U2b ... U7a, U7b. ONE stage per session.
-Status of each stage: HANDOFF.md, section 7 (rows U0 and U1a-U7b). U0, U1a, U1b and U2a are built (2026-11-15); the rest follow the list below.
+Status of each stage: HANDOFF.md, section 7 (rows U0 and U1a-U7b). U0 to U2b are built (2026-11-15); the rest follow the list below.
 Why 14 small stages: the first plan had 7 big ones (U1-U7) and a session ran out of credit before it finished. Each old stage is now cut in two (a and b), so each one finishes inside one session.
 
 ```text
@@ -34,7 +34,7 @@ U0  DONE. Skeleton: `ui` command, safe server, design system, sidebar shell, Set
 U1a DONE. Chat core. Choose a checkpoint + tokenizer (or an identity core folder) from files inside the project, load it, send a message, bubbles, typing indicator, Enter to send / Shift+Enter for a new line, stop button, token counter (used / the model's window). Endpoints under /api/chat/. Replies are plain text; use say(), never handle().
 U1b DONE. Chat controls. Settings drawer (temperature, top-k, max new tokens), save and reset the conversation, live mood badge.
 U2a DONE. Memory list. Searchable list, add / edit / pin / forget, the maintenance plan with a preview before apply.
-U2b Memory graph + Mood + Person card. Graph (pan/zoom, click a node), mood history chart, view and edit the Person card.
+U2b DONE. Memory graph + Mood + Person card. Graph (pan/zoom, click a node), mood history chart, view and edit the Person card.
 U3a Prompt panel. A side panel showing exactly which memories and old-chat recall (--archive) went into the last prompt.
 U3b Persona switcher (owner-side, through the runtime) and the personas page.
 U4a Data page, part 1. Messenger scan/import wizard, privacy audit view, data-report verdict.

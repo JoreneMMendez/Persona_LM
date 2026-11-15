@@ -1,6 +1,7 @@
 // PersonaLM UI, stage U2a: the Memory page. Searchable list, add / edit / pin / forget, and the maintenance preview.
 // Memory text is only ever put on the page with textContent (never as HTML). Nothing here is sent anywhere but this server.
 import { h, api, toast } from './app.js';
+import { graphView } from './mind.js';
 
 const PAGE = 100;
 const STATUS_LABEL = { all: 'All', active: 'Active', dormant: 'Dormant', archived: 'Archived', merged: 'Merged' };
@@ -187,16 +188,27 @@ export async function memoryPage(main) {
     };
   }
 
-  // ---------- page
-  main.replaceChildren(h('div', { class: 'stack' },
-    h('p', { class: 'lead' }, 'What the AI remembers about you and the people in your life. Everything here is stored in memory.json on this computer, and only you can change it.'),
-    h('div', { class: 'row mem-top' }, summary, h('div', { class: 'spacer' }), maintBtn, addBtn),
+  // ---------- page: two tabs, the list and the graph
+  const listView = h('div', { class: 'stack' },    h('div', { class: 'row mem-top' }, summary, h('div', { class: 'spacer' }), maintBtn, addBtn),
     h('div', { class: 'card mem-tools' },
       h('div', { class: 'field grow' }, h('label', { for: 'mem-q' }, 'Search'), search),
       h('div', { class: 'field' }, h('label', { for: 'mem-status' }, 'Status'), statusSel),
       h('div', { class: 'field' }, h('label', { for: 'mem-sort' }, 'Order'), sortSel),
       h('label', { class: 'check', for: 'mem-pin' }, pinOnly, h('span', null, 'Pinned only'))),
-    matchTxt, listBox, h('div', { class: 'row', style: 'justify-content:center' }, moreBtn), dlg, mDlg));
+    matchTxt, listBox, h('div', { class: 'row', style: 'justify-content:center' }, moreBtn), dlg, mDlg);
+  const graphBox = h('div', { hidden: true });
+  const tabList = h('button', { class: 'tab', type: 'button', role: 'tab', 'aria-selected': 'true', id: 'tab-list' }, 'List');
+  const tabGraph = h('button', { class: 'tab', type: 'button', role: 'tab', 'aria-selected': 'false', id: 'tab-graph' }, 'Graph');
+  function show(which) {
+    const g = which === 'graph';
+    tabList.setAttribute('aria-selected', String(!g)); tabGraph.setAttribute('aria-selected', String(g));
+    listView.hidden = g; graphBox.hidden = !g;
+    if (g) graphView(graphBox); else load(false, true);
+  }
+  tabList.addEventListener('click', () => show('list')); tabGraph.addEventListener('click', () => show('graph'));
+  main.replaceChildren(h('div', { class: 'stack' },
+    h('p', { class: 'lead' }, 'What the AI remembers about you and the people in your life. Everything here is stored in memory.json on this computer, and only you can change it.'),
+    h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Memory views' }, tabList, tabGraph), listView, graphBox));
   moreBtn.hidden = true;
   listBox.replaceChildren(h('div', { class: 'skeleton', style: 'height:96px' }), h('div', { class: 'skeleton', style: 'height:96px' }));
   await load(false);

@@ -212,3 +212,29 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .dialog .list li { align-items: baseline; }
 form.dialog-body textarea { width: 100%; resize: vertical; }
 @media (max-width: 860px) { .mem-top { gap: var(--s2); } .mem-tools .field { flex: 1 1 140px; } .mem-actions { justify-content: flex-start; } }
+
+/* ---- Stage U2b: graph, mood, Person card */
+.graph-wrap { padding: 0; overflow: hidden; }
+.graph-svg { display: block; width: 100%; height: min(62vh, 560px); min-height: 320px; touch-action: none; cursor: grab; background: var(--surface); }
+.graph-svg.grabbing { cursor: grabbing; }
+.ge { stroke: var(--line-strong); opacity: .7; } .ge.on { stroke: var(--accent); opacity: 1; } .ge.dim { opacity: .12; }
+.gn { cursor: pointer; outline: none; } .gn circle { stroke: var(--surface); stroke-width: 2; transition: opacity .15s; }
+.gn:focus-visible circle, .gn.sel circle { stroke: var(--ink); stroke-width: 3; } .gn.dim { opacity: .25; }
+.gn-person circle, .legend.gk-person::before { fill: var(--accent); background: var(--accent); }
+.gn-topic circle, .legend.gk-topic::before { fill: var(--info); background: var(--info); }
+.gn-event circle, .legend.gk-event::before { fill: var(--warn); background: var(--warn); }
+.gn-feeling circle, .legend.gk-feeling::before { fill: var(--bad); background: var(--bad); }
+.gl { font-size: 12px; fill: var(--ink-2); pointer-events: none; paint-order: stroke; stroke: var(--surface); stroke-width: 3px; }
+.legend { display: inline-flex; align-items: center; gap: 6px; font-size: .82rem; color: var(--ink-2); }
+.legend::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--ink-3); }
+.lg-val::before { background: var(--accent); } .lg-aro::before { background: var(--warn); }
+.graph-panel h3 { margin: 0; } .chip-btn { border: 0; cursor: pointer; font-family: inherit; } .chip-btn:hover { filter: brightness(.95); }
+details.card > summary { cursor: pointer; font-weight: 600; }
+.mood-grid { display: grid; grid-template-columns: minmax(200px, 260px) 1fr; gap: var(--s5); align-items: start; margin-top: var(--s3); }
+.mood-map, .mood-chart { width: 100%; height: auto; display: block; }
+.mm-box { fill: var(--surface-2); stroke: var(--line); } .mm-axis { stroke: var(--line-strong); } .mc-grid { stroke: var(--line); stroke-dasharray: 3 3; }
+.mm-t { font-size: 9px; fill: var(--ink-3); } .mm-l { font-size: 8px; fill: var(--ink-2); } .mm-dot { fill: var(--ink-3); }
+.mm-base { fill: none; stroke: var(--ink-3); stroke-width: 1.5; stroke-dasharray: 2 2; } .mm-now { fill: var(--accent); stroke: var(--surface); stroke-width: 2; }
+.mc-val { stroke: var(--accent); stroke-width: 2; } .mc-aro { stroke: var(--warn); stroke-width: 2; stroke-dasharray: 5 3; } .mc-vd { fill: var(--accent); }
+.card-text { overflow-wrap: anywhere; } .list li select { width: auto; min-height: 32px; padding: 2px 8px; }
+@media (max-width: 860px) { .mood-grid { grid-template-columns: 1fr; } .graph-svg { height: 52vh; } }

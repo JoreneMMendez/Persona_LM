@@ -1,4 +1,4 @@
-"""The local web UI server (stages U0, U1a, U1b, U2a). Python standard library only, offline, this computer only.
+"""The local web UI server (stages U0 to U2b). Python standard library only, offline, this computer only.
 
     python -m persona_lm ui                 # opens http://127.0.0.1:8777/ in your browser
     python -m persona_lm ui --port 9000 --no-open --root C:\\path\\to\\project
@@ -35,6 +35,7 @@ from urllib.parse import parse_qs, urlsplit
 from . import __version__
 from .ui_chat import ChatHub, ChatProblem
 from .ui_memory import MemoryHub, MemoryHubProblem
+from .ui_mind import MindHub, MindProblem
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(HERE, "ui_static")
@@ -50,6 +51,7 @@ STATIC = {
     "/static/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/static/chat.js": ("chat.js", "text/javascript; charset=utf-8"),
     "/static/memory.js": ("memory.js", "text/javascript; charset=utf-8"),
+    "/static/mind.js": ("mind.js", "text/javascript; charset=utf-8"),
     "/static/favicon.svg": ("favicon.svg", "image/svg+xml"),
 }
 INDEX_FILE = "index.html"
@@ -141,7 +143,7 @@ NEVER_LEAVES = [
 SECTIONS = [
     {"id": "chat", "label": "Chat", "stage": "U1", "icon": "chat", "ready": True},
     {"id": "memory", "label": "Memory", "stage": "U2", "icon": "graph", "ready": True},
-    {"id": "mood", "label": "Mood and Person", "stage": "U2", "icon": "heart"},
+    {"id": "mood", "label": "Mood and Person", "stage": "U2", "icon": "heart", "ready": True},
     {"id": "prompt", "label": "Prompt and personas", "stage": "U3", "icon": "layers"},
     {"id": "data", "label": "Data", "stage": "U4", "icon": "database"},
     {"id": "training", "label": "Training", "stage": "U5", "icon": "chart"},
@@ -166,6 +168,7 @@ class UIState:
         self.started = time.time()
         self.chat = ChatHub(self.guard)
         self.memory = MemoryHub(self.guard)
+        self.mind = MindHub(self.guard)
 
     def allowed_hosts(self):
         return ("127.0.0.1:%d" % self.port, "localhost:%d" % self.port)
@@ -175,7 +178,7 @@ class UIState:
 
     def info(self):
         return {"name": "PersonaLM", "version": __version__, "project": os.path.basename(self.guard.root) or self.guard.root,
-                "sections": SECTIONS, "stage": "U2a", "uptime_s": int(time.time() - self.started)}
+                "sections": SECTIONS, "stage": "U2b", "uptime_s": int(time.time() - self.started)}
 
     def privacy(self):
         items = []
@@ -305,6 +308,8 @@ def make_handler(state):
                     return self._chat_get(path, url)
                 if path in MEMORY_GET:
                     return self._memory(path, url, None)
+                if path in MIND_GET:
+                    return self._mind(path, None)
                 return self._error(404, "no such route")
             if not self._gate(False):
                 return
@@ -328,6 +333,16 @@ def make_handler(state):
                     out = {"/api/memory/add": h.add, "/api/memory/edit": h.edit, "/api/memory/forget": h.forget, "/api/memory/maintain": h.maintain}[path](body)
                 return self._json(200, {"ok": True, **out})
             except MemoryHubProblem as e:
+                return self._error(e.code, str(e))
+
+        def _mind(self, path, body):
+            """Graph, mood (read only) and Person card lines (owner edits). See ui_mind.py."""
+            h = state.mind
+            try:
+                out = {"/api/graph": h.graph, "/api/mood": h.mood, "/api/person": h.person}.get(path) or {
+                    "/api/person/add": lambda: h.add(body), "/api/person/edit": lambda: h.edit(body), "/api/person/remove": lambda: h.remove(body)}[path]
+                return self._json(200, {"ok": True, **out()})
+            except MindProblem as e:
                 return self._error(e.code, str(e))
 
         def _chat_get(self, path, url):
@@ -392,6 +407,8 @@ def make_handler(state):
                     return self._error(e.code, str(e))
             if path in MEMORY_POST:
                 return self._memory(path, urlsplit(self.path), body)
+            if path in MIND_POST:
+                return self._mind(path, body)
             return self._error(404, "no such route")
 
         def do_PUT(self):
@@ -406,7 +423,9 @@ CHAT_GET = ["/api/chat/poll", "/api/chat/sources", "/api/chat/state"]
 CHAT_POST = ["/api/chat/count", "/api/chat/load", "/api/chat/reset", "/api/chat/save", "/api/chat/send", "/api/chat/settings", "/api/chat/stop"]
 MEMORY_GET = ["/api/memory/list", "/api/memory/plan"]
 MEMORY_POST = ["/api/memory/add", "/api/memory/edit", "/api/memory/forget", "/api/memory/maintain"]
-ROUTES = {"GET": ["/", "/api/health", "/api/info", "/api/privacy"] + CHAT_GET + MEMORY_GET + sorted(STATIC), "POST": ["/api/ping"] + CHAT_POST + MEMORY_POST}
+MIND_GET = ["/api/graph", "/api/mood", "/api/person"]
+MIND_POST = ["/api/person/add", "/api/person/edit", "/api/person/remove"]
+ROUTES = {"GET": ["/", "/api/health", "/api/info", "/api/privacy"] + CHAT_GET + MEMORY_GET + MIND_GET + sorted(STATIC), "POST": ["/api/ping"] + CHAT_POST + MEMORY_POST + MIND_POST}
 
 
 def make_server(root=".", host="127.0.0.1", port=DEFAULT_PORT, token=None):

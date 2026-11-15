@@ -47,8 +47,9 @@ Rebuilt on 2026-11-15 because the previous copy had been overwritten by notes fr
 - Stage U1a (2026-11-15): web UI Chat core. See "Newest state: web UI U1a" below.
 - Stage U1b (2026-11-15): web UI chat controls. See "Newest state: web UI U1b" below.
 - Stage U2a (2026-11-15): web UI Memory list. See "Newest state: web UI U2a" below.
+- Stage U2b (2026-11-15): web UI graph, mood, Person card. See "Newest state: web UI U2b" below.
 - 2026-11-15: old-chat archive (`--archive`), `clean_chat.py` merge mode, s30m setup, s30m chat fine-tune run (overfit, see section 4).
-- Tests: 649 after U2a (`python -m unittest discover -s tests`, 2 skipped without PyTorch); `test_handoff.py` needs this file.
+- Tests: 665 after U2b (`python -m unittest discover -s tests`, 2 skipped without PyTorch); `test_handoff.py` needs this file.
 
 ## 6. Known problems
 - Chat quality is poor at the overfit checkpoint (section 4).
@@ -98,10 +99,18 @@ Next stage: U2a (memory list). `docs/UI_PROMPT.md` has the plan.
 - Limits: still not checked in a real browser; saved chats contain what you wrote (private, git-ignored); Save/Clear/Settings are disabled while a reply is written.
 
 ## Newest state: web UI U2a (memory list), 2026-11-15
-Next stage: U2b (memory graph + mood + Person card). `docs/UI_PROMPT.md` has the plan.
+(U2a done; U2b followed, see below.)
 - Built: Memory page (sidebar "Memory"): search (words, names, ids, feeling), filters (status, pinned only), sort (newest/oldest/strongest/most important), Show more, add, edit (text, feeling, importance, pin), Pin/Unpin, Forget (two clicks), and "Tidy up" = maintenance preview, then Apply.
 - Files: added `persona_lm/ui_memory.py` (MemoryHub), `ui_static/memory.js`, `tests/test_ui_u2a.py`. Changed `ui_server.py` (routes, stage name), `app.js`, `app.css`, `tests/test_ui_u0.py` (route table: the memory routes are now allowed and listed).
 - Endpoints: GET `/api/memory/list|plan`; POST `/api/memory/add|edit|forget|maintain`. All need token + Host/Origin. They touch only `memory.json` (PathGuard) through MemoryStore: same validation, atomic save and conflict check as the typed commands; log lines never hold the text. Forget needs `confirm` = the id and saves without backup (like the CLI). Tidy-up applies only the previewed plan (`plan_id`); if memory changed since, nothing is applied. Chat text cannot reach these routes (chat still uses say()).
 - SAFEGUARD NOTE: before U2a no route wrote memory (a test said so). U2a adds owner-only memory writes as the stage list asked; the test now lists exactly these routes. Identity, proposals and approvals are still untouched.
 - Limits: memory.json in the project root only (an identity core's own memory file is not shown yet). Editing text re-links `[[Name]]` and plain mentions of known nodes; links made by hand with the CLI `--node` are kept. If the chat page has a model loaded with memory, its in-RAM copy is not refreshed: reload the model to see UI changes there. Browser check done once (headless Chromium: search, add, edit error, tidy, forget, light/dark/phone width, no console errors except the deliberate 400).
 - Run: `python -m persona_lm ui --root C:\Users\user\persona_lm_project`, open Memory.
+
+## Newest state: web UI U2b (graph, mood, Person card), 2026-11-15
+Next stage: U3a (prompt panel). `docs/UI_PROMPT.md` has the plan.
+- Built: Memory page now has List | Graph tabs. Graph: force layout (same picture every time), circle size = strength, lines = shared memories, drag to pan, wheel or +/- to zoom, click a node (or use the text node list) to see its active memories and neighbours. Only the 150 biggest nodes are drawn. Mood and Person page: mood now (label, valence/arousal, drift applied in RAM only), mood map, history chart (valence and arousal of the labels that moved the mood), last messages; Person card editor: add, edit, change type (owner/auto/no) and remove ONE line at a time.
+- Files: added `persona_lm/ui_mind.py` (MindHub), `ui_static/mind.js`, `tests/test_ui_u2b.py`. Changed `ui_server.py`, `app.js`, `memory.js` (tabs), `app.css`, `tests/test_ui_u0.py` (route table).
+- Endpoints: GET `/api/graph`, `/api/mood`, `/api/person` (read only; mood.json is never written); POST `/api/person/add|edit|remove`. Token + Host/Origin on all. A line is changed only if the `old` text the page saw still matches (else 409). Editing a line's text makes it an owner line so a rebuild keeps it; the old file is kept as person_card.prev.md. Only person_card.md, mood.json, memory.json are touched (PathGuard).
+- SAFEGUARD NOTE: second owner-only write area after U2a (memory). Mood cannot be changed from the UI; `person build` stays in the terminal.
+- Limits: the mood history stores only labels, so the chart shows each label's typical valence/arousal, not the exact values at that time. Dormant/archived memories are not drawn. Identity core's own memory/mood/card files are not shown yet. Browser check done once (headless Chromium: graph click/zoom, mood page, card add/edit, phone width, no console errors).
