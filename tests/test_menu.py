@@ -84,7 +84,7 @@ class Screen(unittest.TestCase):
     def test_screen_is_erased_between_key_presses(self):
         out = FakeTTY()
         M.Menu(out, color=False, width=100).select(keys("down", "enter"), self.found())
-        self.assertEqual(out.getvalue().count("\x1b[%dF\x1b[J" % P.PANEL_H), 2)
+        self.assertEqual(out.getvalue().count("\x1b[%dF\x1b[J" % P.PANEL_H), 1)      # the choice itself leaves the menu on screen
 
 
 class Collect(unittest.TestCase):
@@ -110,12 +110,34 @@ class Collect(unittest.TestCase):
         self.assertIsNone(M.collect(M.ITEMS[0], {"runs": [], "data": [], "toks": [], "torch": False}, ask=boom, say=lambda *_: None))
 
 
+class Confirm(unittest.TestCase):
+    def test_train_says_what_it_will_do_and_n_cancels(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_project(d)
+            f, said = M.scan(d), []
+            argv = ["train", "--run", os.path.join("work3", "run_pre")]
+            self.assertFalse(M.confirm_train(argv, f, ask=lambda q: "n", say=said.append))
+            self.assertIn("CONTINUE", said[0])
+            self.assertIn("18,300 of 36,000", said[0])
+            self.assertTrue(M.confirm_train(argv, f, ask=lambda q: "", say=lambda *_: None))
+            said2 = []
+            M.confirm_train(["train", "--run", "x"], f, ask=lambda q: "y", say=said2.append)
+            self.assertIn("NEW run", said2[0])
+
+    def test_declining_does_not_run_anything(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_project(d)
+            calls, asked = [], iter(["", "", "", "", "n", ""])
+            M.run_menu(d, stream=FakeTTY(), read=keys("enter", "q"), ask=lambda q: next(asked), call=calls.append, width=100, color=False, interactive=True)
+            self.assertEqual(calls, [])
+
+
 class Loop(unittest.TestCase):
     def test_runs_the_command_and_comes_back(self):
         with tempfile.TemporaryDirectory() as d:
             make_project(d)
             calls = []
-            asked = iter(["", "", "", "", ""])                           # train: 4 answers, then "press Enter"
+            asked = iter(["", "", "", "", "", ""])                       # train: 4 answers, "Start now?", then "press Enter"
             M.run_menu(d, stream=FakeTTY(), read=keys("enter", "q"), ask=lambda q: next(asked), call=calls.append, width=100, color=False, interactive=True)
             self.assertEqual(len(calls), 1)
             self.assertEqual(calls[0][0], "train")

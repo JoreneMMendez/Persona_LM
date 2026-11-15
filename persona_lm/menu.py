@@ -112,6 +112,16 @@ def _h_steps(a, f):
     return "keep %s" % format(r["steps"], ",") if r and r["steps"] else ""
 
 
+HELP = {"run": "where this run's checkpoints are saved (an existing folder = resume it)",
+        "data": "the folder of token files made by `prepare`",
+        "size": "model size; must match the run you are continuing",
+        "steps": "total steps to train for; just Enter keeps the value saved in the run",
+        "ckpt": "the model file to load (ckpt.npz)",
+        "tok": "the tokenizer the model was trained with",
+        "system": "optional: a role to start the chat with, e.g. You are Aria.",
+        "prompt": "the text for the model to continue",
+        "dir": "the folder to look at"}
+
 ITEMS = [
     dict(label="Train or resume a run", cmd="train", desc="Start training, or continue a run exactly where it stopped. Shows the live dashboard.",
          fields=[_field("run", "Run folder", "--run", _d_run, True), _field("data", "Token folder", "--data-dir", _d_data, True),
@@ -232,6 +242,9 @@ class Menu(Skin):
                 self._write("\n".join(lines) + "\n")
                 self.n = len(lines)
                 k = read()
+                if k == "enter" or (k.isdigit() and 1 <= int(k) <= QUIT):
+                    self.n = 0                                           # leave the menu on screen: the questions appear under it
+                    return sel if k == "enter" else int(k) - 1
                 self._erase()
                 if k in ("up", "k"):
                     sel = (sel - 1) % len(ITEMS)
@@ -241,34 +254,35 @@ class Menu(Skin):
                     sel = 0
                 elif k == "end":
                     sel = QUIT
-                elif k == "enter":
-                    return sel
                 elif k in ("q", "esc"):
                     return QUIT
-                elif k.isdigit() and 1 <= int(k) <= QUIT:
-                    return int(k) - 1
         finally:
             self._write("\x1b[?25h")
 
 
 # ------------------------------------------------------------------ asking and running
 def collect(item, found, ask=input, say=print):
-    """Asks what the item needs. Returns the argument list for the normal command line, or None if the person backed out."""
+    """Asks what the item needs, one numbered question at a time. Returns the argument list for the normal command line,
+    or None if the person backed out."""
     argv = [item["cmd"]]
     answers = {}
-    if item["fields"]:
-        say("\n  %s: Enter accepts [what is shown]. Ctrl+C goes back." % item["label"])
+    n = len(item["fields"])
+    if n:
+        say("\n  %s" % item["label"])
+        say("  Answer each question, or press Enter to use the value in [brackets]. Ctrl+C goes back to the menu.")
     try:
-        for f in item["fields"]:
+        for i, f in enumerate(item["fields"], 1):
             default = f["default"](answers, found)
-            note = "[%s]" % default if default else ("[%s]" % f["hint"](answers, found) if f["hint"] and f["hint"](answers, found) else ("" if f["required"] else "(optional)"))
+            hint = f["hint"](answers, found) if f["hint"] else ""
+            note = "[%s]" % default if default else ("[%s]" % hint if hint else ("" if f["required"] else "(optional, Enter to skip)"))
             if f["choices"]:
-                note += " {%s}" % "/".join(f["choices"])
+                note += " choices: %s" % "/".join(f["choices"])
+            say("\n  %d/%d  %s: %s" % (i, n, f["ask"], HELP.get(f["key"], "")))
             while True:
-                val = ask("  %s %s: " % (f["ask"], note)).strip().strip('"').strip()
+                val = ask("       %s > " % note if note else "       > ").strip().strip('"').strip()
                 val = val or default
                 if f["choices"] and val and val not in f["choices"]:
-                    say("  choose one of: %s" % ", ".join(f["choices"]))
+                    say("       choose one of: %s" % ", ".join(f["choices"]))
                     continue
                 break
             if not val and f["required"]:
@@ -281,6 +295,22 @@ def collect(item, found, ask=input, say=print):
         say("")
         return None
     return argv
+
+
+def confirm_train(argv, found, ask=input, say=print):
+    """Training is the one command that is slow and heavy, so say plainly what it will do and ask first."""
+    run = argv[argv.index("--run") + 1] if "--run" in argv else ""
+    r = _find_run(found, run)
+    if r and r["step"]:
+        what = "CONTINUE %s from step %s%s" % (run, format(r["step"], ","), " of %s" % format(r["steps"], ",") if r["steps"] else "")
+    else:
+        what = "start a NEW run in %s" % run
+    say("\n  This will %s." % what)
+    say("  If this run is already training in another window, do not start it a second time.")
+    try:
+        return ask("  Start now? [Y/n] > ").strip().lower() not in ("n", "no")
+    except (KeyboardInterrupt, EOFError):
+        return False
 
 
 def show_cmd(argv):
@@ -326,6 +356,9 @@ def run_menu(root=".", stream=None, read=read_key, ask=input, call=None, width=N
             print("bye")
             return 0
         argv = collect(ITEMS[sel], found, ask)
+        if argv is not None and argv[0] == "train" and not confirm_train(argv, found, ask):
+            print("  not started.")
+            argv = None
         if argv is not None:
             print("\n  $ %s\n" % show_cmd(argv))
             try:
