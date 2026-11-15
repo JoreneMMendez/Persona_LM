@@ -88,26 +88,97 @@ class Screen(unittest.TestCase):
 
 
 class Collect(unittest.TestCase):
-    def test_train_fills_in_what_was_found_and_enter_accepts(self):
+    def test_train_fills_in_what_was_found_and_enter_accepts_everything(self):
         with tempfile.TemporaryDirectory() as d:
             make_project(d)
             f = M.scan(d)
-            asked = []
-            argv = M.collect(M.ITEMS[0], f, ask=lambda q: asked.append(q) or "", say=lambda *_: None)
+            argv = M.collect(M.ITEMS[0], f, ask=lambda q: "", say=lambda *_: None)
             self.assertEqual(argv, ["train", "--run", os.path.join("work3", "run_pre"), "--data-dir", os.path.join("work3", "data_pre"), "--size", "s30m"])
-            self.assertIn("keep 36,000", asked[3])                       # blank steps keeps the saved total
 
     def test_bad_choice_is_asked_again_and_required_blank_backs_out(self):
         f = {"runs": [], "data": [], "toks": [], "torch": False}
-        answers = iter(["r", "d", "huge", "s10m", "500"])
+        answers = iter(["r", "d", "huge", "s10m", "", ""])        # run, data, size (bad, then good), init-from, then Enter on the settings screen
         argv = M.collect(M.ITEMS[0], f, ask=lambda q: next(answers), say=lambda *_: None)
-        self.assertEqual(argv, ["train", "--run", "r", "--data-dir", "d", "--size", "s10m", "--steps", "500"])
+        self.assertEqual(argv, ["train", "--run", "r", "--data-dir", "d", "--size", "s10m"])
         self.assertIsNone(M.collect(M.ITEMS[1], f, ask=lambda q: "", say=lambda *_: None))
+
+    def test_only_changed_settings_become_flags(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_project(d)
+            answers = iter(["", "", "", "", "5", "0.2", "9", "100", ""])    # 4 questions, then weight_decay=0.2, eval_every=100, Enter
+            argv = M.collect(M.ITEMS[0], M.scan(d), ask=lambda q: next(answers), say=lambda *_: None)
+            self.assertEqual(argv[-4:], ["--weight-decay", "0.2", "--eval-every", "100"])
+            self.assertNotIn("--lr", argv)
+
+    def test_the_flags_it_builds_are_accepted_by_the_real_train_command(self):
+        from persona_lm.cli import build_parser
+        changed, _ = edit(["p", "2", ""])
+        argv = ["train", "--run", "r", "--data-dir", "d"] + [w for k, v in changed.items() for w in ("--" + k.replace("_", "-"), str(v))]
+        a = build_parser().parse_args(argv)
+        self.assertEqual((a.lr, a.min_lr, a.warmup, a.steps), (1e-4, 1e-5, 50, 3000))
+
+    def test_init_from_is_passed_when_given(self):
+        f = {"runs": [], "data": [], "toks": [], "torch": False}
+        answers = iter(["r", "d", "s10m", "runs/pre/ckpt.npz", ""])
+        argv = M.collect(M.ITEMS[0], f, ask=lambda q: next(answers), say=lambda *_: None)
+        self.assertEqual(argv[-2:], ["--init-from", "runs/pre/ckpt.npz"])
 
     def test_ctrl_c_goes_back(self):
         def boom(q):
             raise KeyboardInterrupt
         self.assertIsNone(M.collect(M.ITEMS[0], {"runs": [], "data": [], "toks": [], "torch": False}, ask=boom, say=lambda *_: None))
+
+
+BASE = {"steps": 36000, "lr": 6e-4, "min_lr": 6e-5, "warmup": 100, "weight_decay": 0.1, "clip": 1.0, "batch": 2, "accum": 2, "eval_every": 200}
+
+
+def edit(answers, step=0, base=BASE):
+    it, said = iter(answers), []
+    changed = M.edit_settings(dict(base), 4096, step, ask=lambda q: next(it), say=said.append)
+    return changed, "\n".join(said)
+
+
+class Settings(unittest.TestCase):
+    def test_enter_keeps_everything(self):
+        self.assertEqual(edit([""])[0], {})
+
+    def test_every_setting_is_explained(self):
+        for d in M.SETTINGS:
+            for field in ("short", "what", "up", "down", "affects", "tip"):
+                self.assertTrue(d[field], (d["key"], field))
+        self.assertEqual({d["key"] for d in M.SETTINGS} - set(M.DEFAULT_HP), set())      # every name is a real training setting
+
+    def test_changing_a_value_shows_the_explanation_and_returns_only_that(self):
+        changed, text = edit(["5", "0.2", ""])
+        self.assertEqual(changed, {"weight_decay": 0.2})
+        for want in ("brake on memorizing", "What it does", "Raise it", "Lower it", "Affects", "(was 0.1)"):
+            self.assertIn(want, text)
+
+    def test_numbers_may_have_commas_and_exponents(self):
+        self.assertEqual(edit(["1", "50,000", "2", "3e-4", ""])[0], {"steps": 50000, "lr": 3e-4})
+
+    def test_bad_values_are_refused_and_nothing_changes(self):
+        for bad in ("abc", "-1", "5"):                                   # not a number, below range, above range for weight_decay
+            changed, text = edit(["5", bad if bad != "5" else "5", ""])
+            self.assertEqual(changed, {}, bad)
+        self.assertEqual(edit(["1", "5000", ""], step=19403)[0], {})       # steps must be beyond the step the run is at
+        self.assertEqual(edit(["3", "0.01", ""])[0], {})                   # min_lr may not be above lr
+        self.assertEqual(edit(["2", "1e-5", ""])[0], {})                   # lr may not be below min_lr
+
+    def test_preset_and_reset(self):
+        changed, text = edit(["p", "1", ""])
+        self.assertEqual(changed, {"weight_decay": 0.2, "lr": 3e-4, "min_lr": 3e-5, "eval_every": 100})
+        self.assertIn("Heads-up", edit(["p", "1", ""], step=19403)[1])      # on a resumed run the lr-curve jump is explained
+        self.assertEqual(edit(["p", "1", "r", ""])[0], {})
+
+    def test_tokens_seen_is_shown(self):
+        self.assertIn("16,384 tokens", edit([""])[1])
+        self.assertIn("589,824,000", edit([""])[1])
+
+    def test_junk_input_is_answered_not_crashed(self):
+        changed, text = edit(["zzz", "99", ""])
+        self.assertEqual(changed, {})
+        self.assertIn("type a number", text)
 
 
 class Confirm(unittest.TestCase):
@@ -127,7 +198,7 @@ class Confirm(unittest.TestCase):
     def test_declining_does_not_run_anything(self):
         with tempfile.TemporaryDirectory() as d:
             make_project(d)
-            calls, asked = [], iter(["", "", "", "", "n", ""])
+            calls, asked = [], iter(["", "", "", "", "", "n", ""])
             M.run_menu(d, stream=FakeTTY(), read=keys("enter", "q"), ask=lambda q: next(asked), call=calls.append, width=100, color=False, interactive=True)
             self.assertEqual(calls, [])
 
@@ -137,7 +208,7 @@ class Loop(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             make_project(d)
             calls = []
-            asked = iter(["", "", "", "", "", ""])                       # train: 4 answers, "Start now?", then "press Enter"
+            asked = iter([""] * 7)                                         # train: 4 questions, settings Enter, "Start now?", "press Enter"
             M.run_menu(d, stream=FakeTTY(), read=keys("enter", "q"), ask=lambda q: next(asked), call=calls.append, width=100, color=False, interactive=True)
             self.assertEqual(len(calls), 1)
             self.assertEqual(calls[0][0], "train")

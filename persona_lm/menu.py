@@ -18,12 +18,23 @@ import textwrap
 
 from .pretty import MAX_W, MIN_WIDTH, PANEL_H, Skin, enable_vt, fit
 from .model import PRESETS
+from .train import DEFAULT_HP
 
 SKIP_DIRS = {".git", "__pycache__", "node_modules", "venv", ".venv", "site-packages", "private", "tests", "docs"}
 SIZES = sorted(PRESETS, key=lambda k: PRESETS[k]["d_model"])
 
 
 # ------------------------------------------------------------------ what is in the project folder
+def run_meta(ckpt_path):
+    """The small meta block of a checkpoint (settings, model size, step); the weights are not loaded. None if unreadable."""
+    try:
+        import numpy as np
+        with np.load(ckpt_path) as z:
+            return json.loads(bytes(z["meta"].tolist()).decode("utf-8"))
+    except Exception:
+        return None
+
+
 def run_info(ckpt_path):
     """(size name or '?', step, total steps) read from a checkpoint's small meta block; the weights are not loaded."""
     try:
@@ -107,25 +118,170 @@ def _d_size(a, f):
     return r["size"] if r and r["size"] not in (None, "?") else "s10m"
 
 
-def _h_steps(a, f):
-    r = _find_run(f, a.get("run"))
-    return "keep %s" % format(r["steps"], ",") if r and r["steps"] else ""
-
-
 HELP = {"run": "where this run's checkpoints are saved (an existing folder = resume it)",
         "data": "the folder of token files made by `prepare`",
         "size": "model size; must match the run you are continuing",
-        "steps": "total steps to train for; just Enter keeps the value saved in the run",
+        "init": "only for a NEW run: copy the weights of another model (e.g. runs\\pre\\ckpt.npz) - this is how chat fine-tuning starts. Leave empty to continue or start fresh",
         "ckpt": "the model file to load (ckpt.npz)",
         "tok": "the tokenizer the model was trained with",
         "system": "optional: a role to start the chat with, e.g. You are Aria.",
         "prompt": "the text for the model to continue",
         "dir": "the folder to look at"}
 
+# ------------------------------------------------------------------ the training settings screen
+SETTINGS = [
+    dict(key="steps", short="how long the run is", kind=int, lo=1, hi=10 ** 7,
+         what="How many training steps the whole run lasts. Each step reads a batch of text and updates the model once.",
+         up="Longer training. The model sees the data more times: it can learn more, but on small data it starts memorizing (overfitting).",
+         down="A shorter, faster run. Less risk of memorizing, but a less-trained model.",
+         affects="Run time, and the learning-rate curve (it shrinks gradually until the last step).",
+         tip="Must be more than the current step when resuming. Compare 'tokens seen' below with the size of your token files."),
+    dict(key="lr", short="size of each update", kind=float, lo=1e-6, hi=1e-1,
+         what="Learning rate: how big a change each step makes to the model. It starts here and slowly shrinks to min_lr.",
+         up="Learns faster, but can become unstable (loss spikes, or nan).",
+         down="Gentler, steadier updates. Slower progress, and usually less overfitting.",
+         affects="Speed and stability of learning. Changing it in the middle of a run makes the rate jump to the new curve at once.",
+         tip="3e-4 for a gentler pretraining run; 1e-4 for chat fine-tuning."),
+    dict(key="min_lr", short="size of updates at the end", kind=float, lo=0.0, hi=1e-1,
+         what="The smallest learning rate, reached at the last step.",
+         up="The model is still changed strongly late in the run.",
+         down="The run settles gently at the end, which polishes fine details.",
+         affects="How the end of the run behaves.",
+         tip="About one tenth of lr. Must not be higher than lr."),
+    dict(key="warmup", short="slow start", kind=int, lo=0, hi=100000,
+         what="Steps at the start where the learning rate climbs slowly from 0 up to lr, so a fresh model is not shaken by big early updates.",
+         up="A safer start, slightly slower.",
+         down="A faster start, with a risk of early loss spikes.",
+         affects="Only the first steps of a NEW run. No effect when you resume a run that is already past this step.",
+         tip="50 to 100 is typical."),
+    dict(key="weight_decay", short="brake on memorizing", kind=float, lo=0.0, hi=1.0,
+         what="A small pull of every weight toward zero at each step. It works as a brake on memorizing the training text.",
+         up="A stronger brake: less overfitting. Too high and the model cannot learn (loss stays high).",
+         down="A weaker brake: fits the training text more closely and overfits sooner.",
+         affects="How much the model memorizes instead of generalizing.",
+         tip="0.1 is the default. 0.2 is a good try when data is small."),
+    dict(key="clip", short="cap on one update", kind=float, lo=0.0, hi=100.0,
+         what="Gradient clipping: limits how large one update may be, so a single odd batch cannot wreck the model.",
+         up="Allows bigger updates.",
+         down="Safer against loss spikes; too low slows learning.",
+         affects="Stability. 0 turns it off.",
+         tip="Leave it at 1.0 unless you see sudden loss spikes."),
+    dict(key="batch", short="texts per GPU pass", kind=int, lo=1, hi=512,
+         what="How many text sequences the GPU reads at once (one micro-batch).",
+         up="Faster per token, but needs more GPU memory. A 6 GB laptop GPU runs out quickly.",
+         down="Uses less memory, but slower.",
+         affects="GPU memory and speed. Together with accum it sets the effective batch.",
+         tip="If you get an out-of-memory error, halve batch and double accum."),
+    dict(key="accum", short="passes per update", kind=int, lo=1, hi=1024,
+         what="How many micro-batches are added up before the model is updated once. It is a way to get a big batch on a small GPU.",
+         up="Smoother, more reliable updates (a bigger effective batch). Each step takes longer.",
+         down="Quicker steps, but noisier updates.",
+         affects="Effective batch = batch x accum, and the time per step.",
+         tip="Keep batch x accum the same when you only want to fit the GPU memory."),
+    dict(key="eval_every", short="how often to check val", kind=int, lo=1, hi=100000,
+         what="How often (in steps) the model is tested on validation text that it never trains on. This is where the val number comes from.",
+         up="Fewer checks, slightly faster, but you notice overfitting later.",
+         down="You spot overfitting sooner, with a tiny slowdown.",
+         affects="How closely you can watch for overfitting (and which step can be 'best').",
+         tip="100 to 200."),
+]
+
+QUICK = [
+    ("Fight overfitting", dict(weight_decay=0.2, lr=3e-4, min_lr=3e-5, eval_every=100),
+     "Stronger brake on memorizing, gentler updates, validation checked every 100 steps. It cannot replace more data."),
+    ("Chat fine-tune", dict(lr=1e-4, min_lr=1e-5, warmup=50, steps=3000),
+     "A short, gentle run for tuning a pretrained model on chat data. Needs a NEW run folder with 'Start from weights' filled in."),
+]
+
+
+def _fmt(v):
+    return format(v, ",") if isinstance(v, int) else "%g" % v
+
+
+def _parse(text, kind):
+    return kind(float(text.replace(",", "").replace("_", ""))) if kind is int else float(text.replace(",", ""))
+
+
+def edit_settings(base, ctx, step, ask=input, say=print):
+    """Shows the training settings with plain-words help and lets the person change any of them before the run starts.
+    `base` = the values the run uses now (saved in the run, or the defaults for a new one); `ctx` = tokens per sequence; `step` = where
+    a resumed run is (0 for a new one). Returns only the settings that were CHANGED, as {name: value}."""
+    cur = dict(base)
+    n = len(SETTINGS)
+    say("\n  Training settings")
+    say("  These are the numbers training will use. Press Enter to keep them all, or type a number to see what a setting does and change it.")
+    while True:
+        say("")
+        for i, d in enumerate(SETTINGS, 1):
+            k = d["key"]
+            mark = "*" if cur[k] != base[k] else " "
+            was = "  (was %s)" % _fmt(base[k]) if mark == "*" else ""
+            say("  %s%d  %-13s %9s   %s%s" % (mark, i, k, _fmt(cur[k]), d["short"], was))
+        per = cur["batch"] * cur["accum"] * ctx
+        say("\n  Each step trains on %s tokens, so %s steps = %s tokens in total. Far more tokens than your data holds means memorizing." % (
+            format(per, ","), format(cur["steps"], ","), format(per * cur["steps"], ",")))
+        if step and any(cur[k] != base[k] for k in ("lr", "min_lr", "steps")):
+            say("  Heads-up: this run is at step %s. The learning rate follows a curve from lr down to min_lr over all the steps, so changing lr, min_lr or steps makes it jump to the new curve right now." % format(step, ","))
+        if cur["batch"] * cur["accum"] != base["batch"] * base["accum"]:
+            say("  Heads-up: batch x accum changed, so each update now uses a different amount of text. Fine, just not the same as before.")
+        k = ask("\n  Change which? number 1-%d, p = quick presets, r = reset, Enter = continue > " % n).strip().lower()
+        if not k:
+            break
+        if k == "r":
+            cur = dict(base)
+        elif k == "p":
+            say("")
+            for j, (name, vals, why) in enumerate(QUICK, 1):
+                say("  %d  %s: %s" % (j, name, ", ".join("%s=%s" % (a, _fmt(b)) for a, b in vals.items())))
+                say("     %s" % why)
+            c = ask("\n  Apply which? number, or Enter for none > ").strip()
+            if c.isdigit() and 1 <= int(c) <= len(QUICK):
+                cur.update(QUICK[int(c) - 1][1])
+        elif k.isdigit() and 1 <= int(k) <= n:
+            d = SETTINGS[int(k) - 1]
+            say("\n  %s   (now %s, was %s)" % (d["key"], _fmt(cur[d["key"]]), _fmt(base[d["key"]])))
+            for label, field in (("What it does", "what"), ("Raise it", "up"), ("Lower it", "down"), ("Affects", "affects"), ("Tip", "tip")):
+                for j, line in enumerate(textwrap.wrap(d[field], 74)):
+                    say("    %-13s %s" % (label + ":" if j == 0 else "", line))
+            raw = ask("\n  New value (Enter = keep) > ").strip()
+            if raw:
+                try:
+                    v = _parse(raw, d["kind"])
+                except ValueError:
+                    say("  that is not a number, nothing changed")
+                    continue
+                key = d["key"]
+                if not d["lo"] <= v <= d["hi"]:
+                    say("  %s must be between %s and %s, nothing changed" % (key, _fmt(d["lo"]), _fmt(d["hi"])))
+                elif key == "steps" and step and v <= step:
+                    say("  steps must be more than %s, where this run already is, nothing changed" % format(step, ","))
+                elif key == "lr" and v < cur["min_lr"]:
+                    say("  lr cannot be lower than min_lr (%s): lower min_lr first, nothing changed" % _fmt(cur["min_lr"]))
+                elif key == "min_lr" and v > cur["lr"]:
+                    say("  min_lr cannot be higher than lr (%s), nothing changed" % _fmt(cur["lr"]))
+                else:
+                    cur[key] = v
+        else:
+            say("  type a number from 1 to %d, p, r, or just press Enter" % n)
+    return {k: cur[k] for k in cur if cur[k] != base[k]}
+
+
+def settings_base(found, answers):
+    """(settings in use now, tokens per sequence, current step) for the run folder / size that were typed."""
+    r = _find_run(found, answers.get("run"))
+    meta = run_meta(r["ckpt"]) if r else None
+    hp = dict(DEFAULT_HP)
+    if meta:
+        hp.update(meta.get("hp") or {})
+        return {d["key"]: hp[d["key"]] for d in SETTINGS}, int((meta.get("cfg") or {}).get("ctx") or 0) or PRESETS[answers["size"]]["ctx"], int(meta.get("step", 0))
+    return {d["key"]: hp[d["key"]] for d in SETTINGS}, PRESETS[answers["size"]]["ctx"], 0
+
+
+
 ITEMS = [
-    dict(label="Train or resume a run", cmd="train", desc="Start training, or continue a run exactly where it stopped. Shows the live dashboard.",
+    dict(label="Train or resume a run", cmd="train", settings=True, desc="Start training, or continue a run exactly where it stopped. You can review and change the numbers first.",
          fields=[_field("run", "Run folder", "--run", _d_run, True), _field("data", "Token folder", "--data-dir", _d_data, True),
-                 _field("size", "Model size", "--size", _d_size, True, SIZES), _field("steps", "Total steps", "--steps", None, False, None, _h_steps)]),
+                 _field("size", "Model size", "--size", _d_size, True, SIZES), _field("init", "Start from weights", "--init-from")]),
     dict(label="Chat with a model", cmd="chat", desc="Talk to a trained model in this window.",
          fields=[_field("ckpt", "Checkpoint", "--ckpt", _d_ckpt, True), _field("tok", "Tokenizer", "--tokenizer", _d_tok, True),
                  _field("system", "System prompt", "--system")]),
@@ -291,6 +447,10 @@ def collect(item, found, ask=input, say=print):
             answers[f["key"]] = val
             if val:
                 argv += [f["flag"], val] if f["flag"] else [val]
+        if item.get("settings"):
+            base, ctx, step = settings_base(found, answers)
+            for k, v in edit_settings(base, ctx, step, ask, say).items():
+                argv += ["--" + k.replace("_", "-"), str(v)]
     except (KeyboardInterrupt, EOFError):
         say("")
         return None
@@ -302,7 +462,8 @@ def confirm_train(argv, found, ask=input, say=print):
     run = argv[argv.index("--run") + 1] if "--run" in argv else ""
     r = _find_run(found, run)
     if r and r["step"]:
-        what = "CONTINUE %s from step %s%s" % (run, format(r["step"], ","), " of %s" % format(r["steps"], ",") if r["steps"] else "")
+        total = int(argv[argv.index("--steps") + 1]) if "--steps" in argv else r["steps"]
+        what = "CONTINUE %s from step %s%s" % (run, format(r["step"], ","), " of %s" % format(total, ",") if total else "")
     else:
         what = "start a NEW run in %s" % run
     say("\n  This will %s." % what)
