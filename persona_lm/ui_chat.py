@@ -1,4 +1,5 @@
-"""The chat core of the web UI (stage U1a). One loaded AI, one conversation, one reply at a time.
+"""The chat core of the web UI (stages U1a, U1b). One loaded AI, one conversation, one reply at a time.
+U1b adds: settings (temperature, top-k, longest reply), clear the conversation, save it to saved_chats/, and the mood badge.
 
 Safety rules kept here (each has a test in tests/test_ui_u1a.py):
   * A message from the page goes to runtime.AI.chat(), which uses ChatSession.say(), never handle(): text such as "/approve 1",
@@ -174,6 +175,8 @@ class ChatHub:
                 else:
                     ck = self._file(body.get("ckpt"), "checkpoint", ".npz")
                     tk = self._file(body.get("tokenizer"), "tokenizer", ".json")
+                    if body.get("mood") is True:                    # opt-in: the typed message moves the mood, which is saved in mood.json
+                        kw["mood"] = self.guard.resolve("mood.json")
                     ai, label = RT.load(ckpt=ck, tokenizer=tk, **kw), self._rel(ck)
             except ChatProblem:
                 raise
@@ -204,13 +207,17 @@ class ChatHub:
         used += sum(len(s._message_ids(r, t)) for r, t in s.history)
         return {"used": used, "window": s.ctx, "prompt_budget": s.prompt_budget(), "reply_max": s.settings["max_new"]}
 
+    def mood(self):
+        m = self.ai.session.mood if self.ai is not None else None
+        return None if m is None else {"label": m.label, "valence": round(m.valence, 2), "arousal": round(m.arousal, 2)}
+
     def state(self):
         with self.lock:
             if self.ai is None:
                 return {"loaded": False}
             s, cfg = self.ai.session, self.ai.cfg
             return {"loaded": True, "label": self.label, "name": self.ai.name, "ctx": cfg.ctx, "layers": cfg.n_layer, "d_model": cfg.d_model,
-                    "settings": dict(s.settings), "has_system": bool(s.system), "tokens": self.tokens(),
+                    "settings": dict(s.settings), "max_new_limit": cfg.ctx - 8, "has_system": bool(s.system), "tokens": self.tokens(), "mood": self.mood(),
                     "history": [{"role": r, "text": t} for r, t in s.history],
                     "job": self.job.id if self.job is not None and self.job.state == "running" else None}
 
@@ -262,8 +269,67 @@ class ChatHub:
             out = {"state": job.state, "partial": job.partial() if job.state == "running" else (job.reply or ""), "new_tokens": len(job.ids),
                    "seconds": round((job.ended or time.time()) - job.started, 1)}
             if job.state != "running":
-                out.update({"reply": job.reply, "notes": job.notes, "error": job.error, "tokens": self.tokens()})
+                out.update({"reply": job.reply, "notes": job.notes, "error": job.error, "tokens": self.tokens(), "mood": self.mood()})
             return out
+
+    # ---------------------------------------------------------------- U1b: settings, clear, save
+    def _idle(self):
+        if self.ai is None:
+            raise ChatProblem("Load a model first.", 409)
+        if self.job is not None and self.job.state == "running":
+            raise ChatProblem("The AI is still writing a reply. Press Stop first.", 409)
+
+    def settings(self, body):
+        """Same limits as the typed /temp and /max. Only these three numbers can change; nothing else is reachable from here."""
+        with self.lock:
+            self._idle()
+            s = self.ai.session
+            new = {}
+            for key, lo, hi, kind in (("temperature", 0, 2, float), ("top_k", 0, 1000, int), ("max_new", 1, s.ctx - 8, int)):
+                if key not in body or body[key] is None:
+                    continue
+                v = body[key]
+                if isinstance(v, bool) or not isinstance(v, (int, float)) or not (lo <= v <= hi) or (kind is int and v != int(v)):
+                    raise ChatProblem("%s must be %s from %s to %s." % (key, "a whole number" if kind is int else "a number", lo, hi))
+                new[key] = kind(v)
+            if not new:
+                raise ChatProblem("Nothing to change.")
+            s.settings.update(new)
+            return self.state()
+
+    def reset(self):
+        """Clears the conversation on this page and in the AI (not memory.json, not mood.json). Uses AI.reset(), the owner-side method."""
+        with self.lock:
+            self._idle()
+            self.ai.reset()
+            self.job = None
+            return self.state()
+
+    def save(self):
+        """Writes the conversation to saved_chats/chat_DATE_TIME.txt (a new file; nothing is overwritten). The name is made here, never taken from the page."""
+        with self.lock:
+            self._idle()
+            s = self.ai.session
+            if not s.history:
+                raise ChatProblem("Nothing to save yet.")
+            try:
+                folder = self.guard.resolve("saved_chats")
+                os.makedirs(folder, exist_ok=True)
+            except Exception as e:
+                raise ChatProblem(self._say(e))
+            stem = time.strftime("chat_%Y%m%d_%H%M%S", time.localtime())
+            name, n = stem + ".txt", 1
+            while os.path.exists(os.path.join(folder, name)) and n < 100:      # two saves in one second: the second gets _2, _3 ...
+                n += 1
+                name = "%s_%d.txt" % (stem, n)
+            old, s.save_dir = s.save_dir, folder
+            try:
+                msg = s.save(name)                                  # the chat screen's own save: refuses to overwrite
+            finally:
+                s.save_dir = old
+            if not msg.startswith("Saved"):
+                raise ChatProblem(self._say(msg).replace(folder, "saved_chats"))
+            return {"saved": "saved_chats/" + name}
 
     def stop(self):
         with self.lock:

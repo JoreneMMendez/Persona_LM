@@ -91,7 +91,8 @@ class Sources(ChatBase):
 
     def test_token_and_host_are_needed_for_every_chat_route(self):
         for m, p in (("GET", "/api/chat/sources"), ("GET", "/api/chat/state"), ("GET", "/api/chat/poll?job=j1"),
-                     ("POST", "/api/chat/load"), ("POST", "/api/chat/send"), ("POST", "/api/chat/stop"), ("POST", "/api/chat/count")):
+                     ("POST", "/api/chat/load"), ("POST", "/api/chat/send"), ("POST", "/api/chat/stop"), ("POST", "/api/chat/count"),
+                     ("POST", "/api/chat/settings"), ("POST", "/api/chat/reset"), ("POST", "/api/chat/save")):
             self.assertEqual(self.api(m, p, {} if m == "POST" else None, token=False)[0], 401, p)
             self.assertEqual(self.api(m, p, {} if m == "POST" else None, token="wrong")[0], 401, p)
             self.assertEqual(self.api(m, p, {} if m == "POST" else None, host="evil.example:80")[0], 403, p)

@@ -1,4 +1,4 @@
-"""The local web UI server (stages U0, U1a). Python standard library only, offline, this computer only.
+"""The local web UI server (stages U0, U1a, U1b). Python standard library only, offline, this computer only.
 
     python -m persona_lm ui                 # opens http://127.0.0.1:8777/ in your browser
     python -m persona_lm ui --port 9000 --no-open --root C:\\path\\to\\project
@@ -69,7 +69,7 @@ class PathGuard:
     # count files; the private/ folder inside data_msgr is blocked below.
     ALLOWED_TOP = (
         "memory.json", "mood.json", "person_card.md", "persona_settings.json", "project.json", "identity_core", "work", "work2", "work3",
-        "data_chat", "data_pre", "data_msgr", "data_msgr_chats", "data_msgr_archive", "exports", "docs", "HANDOFF.md", "README.md",
+        "data_chat", "data_pre", "saved_chats", "data_msgr", "data_msgr_chats", "data_msgr_archive", "exports", "docs", "HANDOFF.md", "README.md",
     )
 
     def __init__(self, root):
@@ -122,6 +122,7 @@ STORAGE = [
     ("work3", "Third work folder (s30m runs)", "checkpoints and logs of the s30m runs", "medium"),
     ("data_chat", "Prepared chat tokens", "your chats as numbers (token files)", "high"),
     ("data_pre", "Prepared public text tokens", "public web text as numbers (not private)", "low"),
+    ("saved_chats", "Saved conversations", "chats you saved from the Chat page, as plain text (what you and the AI wrote)", "high"),
     ("exports", "Export packages", "a copy of the AI to use elsewhere; may contain memory and identity", "high"),
 ]
 
@@ -169,7 +170,7 @@ class UIState:
 
     def info(self):
         return {"name": "PersonaLM", "version": __version__, "project": os.path.basename(self.guard.root) or self.guard.root,
-                "sections": SECTIONS, "stage": "U1a", "uptime_s": int(time.time() - self.started)}
+                "sections": SECTIONS, "stage": "U1b", "uptime_s": int(time.time() - self.started)}
 
     def privacy(self):
         items = []
@@ -356,8 +357,9 @@ def make_handler(state):
             if path in CHAT_POST:
                 try:
                     h = state.chat
-                    out = (h.load(body) if path == "/api/chat/load" else h.send(body.get("message")) if path == "/api/chat/send" else
-                           h.stop() if path == "/api/chat/stop" else h.count(body.get("text")))
+                    out = {"/api/chat/load": lambda: h.load(body), "/api/chat/send": lambda: h.send(body.get("message")), "/api/chat/stop": h.stop,
+                           "/api/chat/count": lambda: h.count(body.get("text")), "/api/chat/settings": lambda: h.settings(body),
+                           "/api/chat/reset": h.reset, "/api/chat/save": h.save}[path]()
                     return self._json(200, {"ok": True, **out})
                 except ChatProblem as e:
                     return self._error(e.code, str(e))
@@ -372,7 +374,7 @@ def make_handler(state):
 
 
 CHAT_GET = ["/api/chat/poll", "/api/chat/sources", "/api/chat/state"]
-CHAT_POST = ["/api/chat/count", "/api/chat/load", "/api/chat/send", "/api/chat/stop"]
+CHAT_POST = ["/api/chat/count", "/api/chat/load", "/api/chat/reset", "/api/chat/save", "/api/chat/send", "/api/chat/settings", "/api/chat/stop"]
 ROUTES = {"GET": ["/", "/api/health", "/api/info", "/api/privacy"] + CHAT_GET + sorted(STATIC), "POST": ["/api/ping"] + CHAT_POST}
 
 

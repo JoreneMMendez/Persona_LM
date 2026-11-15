@@ -45,8 +45,9 @@ Rebuilt on 2026-11-15 because the previous copy had been overwritten by notes fr
 - Stage 9a/9b: runtime API with KV cache; export package and local server; GGUF export (not tested inside llama.cpp).
 - Stage U0: local web UI (`python -m persona_lm ui`).
 - Stage U1a (2026-11-15): web UI Chat core. See "Newest state: web UI U1a" below.
+- Stage U1b (2026-11-15): web UI chat controls. See "Newest state: web UI U1b" below.
 - 2026-11-15: old-chat archive (`--archive`), `clean_chat.py` merge mode, s30m setup, s30m chat fine-tune run (overfit, see section 4).
-- Tests: 612 after U1a (`python -m unittest discover -s tests`, 2 skipped without PyTorch); `test_handoff.py` needs this file.
+- Tests: 627 after U1b (`python -m unittest discover -s tests`, 2 skipped without PyTorch); `test_handoff.py` needs this file.
 
 ## 6. Known problems
 - Chat quality is poor at the overfit checkpoint (section 4).
@@ -86,4 +87,12 @@ Web UI plan and stage prompt: `docs/UI_PROMPT.md` (U0 and U1a done; next is U1b,
 - Defaults: temperature 0.5 (HANDOFF section 7 advice), max_new 120, top_k 40. U1b adds the settings drawer. Loading again starts a new conversation. Reply is kept (marked "stopped") if you press Stop mid-way.
 - Limits: not checked in a real browser (none available in the build session): run the browser check once on your PC (light, dark, narrow width, console). Memory, mood badge, archive recall are not wired into the chat page yet (U1b/U2/U3); checkpoint mode chats without them. Identity core mode loads the core's own memory/mood/Person card as the runtime does (the model's memory use is untested, see section 6).
 - Run: `python -m persona_lm ui --root C:\Users\user\persona_lm_project`, open the printed link, Chat page, pick `work3/run_chat2/ckpt.npz`, tokenizer `work/tok.json`.
+
+## Newest state: web UI U1b (chat controls), 2026-11-15
+Next stage: U2a (memory list). `docs/UI_PROMPT.md` has the plan.
+- Built: Settings drawer (temperature, top-k, longest reply; same limits as the typed /temp and /max; not while a reply is being written), Save (new file `saved_chats/chat_DATE_TIME[_n].txt`, name made by the server, never overwrites), Clear (two-step button; keeps memory.json and mood.json), live mood badge (label; hover shows valence/arousal).
+- Mood is OFF by default in checkpoint mode: tick "Use a mood" on the load screen (then it reads/writes `mood.json`, and adds a mood line to the prompt; the model was not fine-tuned on it, so replies may change). In identity core mode the core's own mood is used. Only the typed message moves the mood (tested: the AI's words cannot).
+- Endpoints added: POST `/api/chat/settings|reset|save`. `/api/chat/state` and finished polls now carry `mood` and `max_new_limit`. `load` accepts `mood: true` (exactly true) and, for cores, `version`.
+- Files: changed `ui_chat.py`, `ui_server.py` (`saved_chats` in PathGuard and the Privacy page), `chat.js`, `app.css`, `.gitignore` (`saved_chats/`), `tests/test_ui_u0.py`, `tests/test_ui_u1a.py`; added `tests/test_ui_u1b.py`.
+- Limits: still not checked in a real browser; saved chats contain what you wrote (private, git-ignored); Save/Clear/Settings are disabled while a reply is written.
 

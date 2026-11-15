@@ -125,11 +125,11 @@ python -m persona_lm train ... --backend auto --device auto --precision auto --b
 inside the same `<|memory|>` block. `/recall words` shows what would be recalled. Limits: word-overlap search only, and the model was not yet
 fine-tuned on memory blocks, so how well it uses them is untested.
 
-## Web UI (stages U0 + U1a; see docs/UI_PROMPT.md)
+## Web UI (stages U0, U1a, U1b; see docs/UI_PROMPT.md)
 
     python -m persona_lm ui --root C:\\path\\to\\project     # prints a link with a one-time key; this computer only (127.0.0.1)
 
-Chat page: pick a checkpoint + tokenizer (or an identity core), talk to it, Stop a reply, see how much of the window is used. Text you type is never a command. More pages arrive stage by stage.
+Chat page: pick a checkpoint + tokenizer (or an identity core), talk to it, Stop a reply, see how much of the window is used, change temperature / top-k / reply length, save the conversation to `saved_chats/`, clear it, and (optionally) see the mood badge. Text you type is never a command. More pages arrive stage by stage.
 
 ## Data formats
 - Pretraining: `.txt`, `.md` (any folder of them), `.jsonl`/`.json` with strings or `{"text": "..."}`.

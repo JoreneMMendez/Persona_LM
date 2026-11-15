@@ -178,3 +178,14 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .meter-fill { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 99px; transition: width .25s var(--ease); }
 .meter.hot .meter-fill { background: var(--warn); }
 @media (max-width: 860px) { .chat { height: calc(100dvh - 100px); } .msg { max-width: 92%; } }
+
+/* ---- chat controls (U1b) */
+.check { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer; }
+.check input { width: 18px; height: 18px; min-height: 0; accent-color: var(--accent); }
+.drawer { margin: 0 0 0 auto; height: 100dvh; max-height: none; width: min(420px, 100vw); border-radius: var(--r-lg) 0 0 var(--r-lg); }
+.drawer[open] { animation: slide .22s var(--ease); }
+@keyframes slide { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+.drawer input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
+.drawer input[type=number] { width: 96px; }
+.chat-head > .row { justify-content: flex-end; }
+.drawer .dialog-actions { gap: var(--s2); }

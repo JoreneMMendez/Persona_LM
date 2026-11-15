@@ -27,6 +27,7 @@ from .runtime import RuntimeProblem
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
 MAX_BODY = 65536
 MAX_MESSAGE = 4000
+DRAIN_LIMIT = 16 * MAX_BODY
 
 
 class ServerProblem(Exception):
@@ -42,11 +43,33 @@ def make_server(ai, host="127.0.0.1", port=8765, token=None, allow_persona_switc
     class Handler(BaseHTTPRequestHandler):
         server_version = "persona_lm"
         protocol_version = "HTTP/1.0"
+        timeout = 15                                       # a client that stalls cannot hold a thread for ever
+        _body_done = False
 
         def log_message(self, *args):                      # silence the default per-request line: it must never carry message texts
             pass
 
+        def _drain_body(self):
+            """Read and throw away any request body that has not been read yet. If we answer (401, 404, 403 ...) and close while the
+            client's body is still unread, Windows resets the connection and the client gets WinError 10053/10054 instead of our answer."""
+            if self._body_done or self.command not in ("POST", "PUT", "PATCH", "DELETE"):
+                return
+            self._body_done = True
+            try:
+                left = min(int(self.headers.get("Content-Length", "0")), DRAIN_LIMIT)
+            except ValueError:
+                return
+            try:
+                while left > 0:
+                    chunk = self.rfile.read(min(left, 65536))
+                    if not chunk:
+                        break
+                    left -= len(chunk)
+            except OSError:
+                pass
+
         def _send(self, code, obj):
+            self._drain_body()
             body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
             self.send_response(code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -68,16 +91,9 @@ def make_server(ai, host="127.0.0.1", port=8765, token=None, allow_persona_switc
                 self._send(411, {"error": "Content-Length is required."})
                 return None
             if n < 0 or n > MAX_BODY:
-                # Read and throw away a moderately oversized body before answering. If we answer first and
-                # close with unread data, Windows resets the connection and the client never sees the 413.
-                left = n if 0 < n <= 16 * MAX_BODY else 0
-                while left > 0:
-                    chunk = self.rfile.read(min(left, 65536))
-                    if not chunk:
-                        break
-                    left -= len(chunk)
-                self._send(413, {"error": "The request is too big (at most %d bytes)." % MAX_BODY})
+                self._send(413, {"error": "The request is too big (at most %d bytes)." % MAX_BODY})   # _send drains a moderately oversized body first
                 return None
+            self._body_done = True
             try:
                 obj = json.loads(self.rfile.read(n).decode("utf-8"))
                 if not isinstance(obj, dict):
@@ -136,15 +152,3 @@ def make_server(ai, host="127.0.0.1", port=8765, token=None, allow_persona_switc
     srv = ThreadingHTTPServer((host, port), Handler)
     srv.daemon_threads = True
     return srv
-
-
-def serve(ai, host="127.0.0.1", port=8765, token=None, allow_persona_switch=False, out=print):
-    srv = make_server(ai, host, port, token, allow_persona_switch)
-    out("Serving %s on http://%s:%d  (Ctrl+C stops it). Plain HTTP, one conversation. %s" % (
-        ai.name or "the AI", host, srv.server_address[1], "Token required." if token else "This computer only."))
-    try:
-        srv.serve_forever()
-    except KeyboardInterrupt:
-        out("Stopped.")
-    finally:
-        srv.server_close()

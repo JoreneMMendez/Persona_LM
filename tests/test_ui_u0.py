@@ -188,7 +188,7 @@ class ApiAuth(Base):
         st, _, body = self.api("GET", "/api/health")
         self.assertEqual((st, json.loads(body)), (200, {"ok": True}))
         info = json.loads(self.api("GET", "/api/info")[2])
-        self.assertEqual(info["stage"], "U1a")
+        self.assertEqual(info["stage"], "U1b")
         ids = [s["id"] for s in info["sections"]]
         for need in ("chat", "memory", "mood", "prompt", "data", "training", "identity", "proposals", "models", "export", "settings"):
             self.assertIn(need, ids)
@@ -303,13 +303,14 @@ class Guard(Base):
 
 
 class SafetyDesign(Base):
-    """No route can run a command, approve, change identity or write memory. U1a adds ONLY the four chat POST routes and three chat GET routes
+    """No route can run a command, approve, change identity or write memory. U1a/U1b add ONLY the seven chat POST routes and three chat GET routes
     below (see tests/test_ui_u1a.py); every other route must still have a harmless name."""
-    CHAT = {"/api/chat/count", "/api/chat/load", "/api/chat/send", "/api/chat/stop", "/api/chat/poll", "/api/chat/sources", "/api/chat/state"}
+    CHAT = {"/api/chat/count", "/api/chat/load", "/api/chat/reset", "/api/chat/save", "/api/chat/send", "/api/chat/settings", "/api/chat/stop",
+            "/api/chat/poll", "/api/chat/sources", "/api/chat/state"}
     FORBIDDEN = re.compile(r"approve|reject|apply|identity|memory|exec|run|shell|command|promote|rollback|forget|chat|file|delete|write", re.I)
 
     def test_route_table_has_no_dangerous_names(self):
-        self.assertEqual(UI.ROUTES["POST"], ["/api/ping", "/api/chat/count", "/api/chat/load", "/api/chat/send", "/api/chat/stop"])
+        self.assertEqual(UI.ROUTES["POST"], ["/api/ping", "/api/chat/count", "/api/chat/load", "/api/chat/reset", "/api/chat/save", "/api/chat/send", "/api/chat/settings", "/api/chat/stop"])
         for method, paths in UI.ROUTES.items():
             for p in paths:
                 if p.startswith("/api/") and p not in self.CHAT:
