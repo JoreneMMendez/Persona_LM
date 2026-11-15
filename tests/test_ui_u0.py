@@ -188,7 +188,7 @@ class ApiAuth(Base):
         st, _, body = self.api("GET", "/api/health")
         self.assertEqual((st, json.loads(body)), (200, {"ok": True}))
         info = json.loads(self.api("GET", "/api/info")[2])
-        self.assertEqual(info["stage"], "U3b")
+        self.assertEqual(info["stage"], "U4a")
         ids = [s["id"] for s in info["sections"]]
         for need in ("chat", "memory", "mood", "prompt", "data", "training", "identity", "proposals", "models", "export", "settings"):
             self.assertIn(need, ids)

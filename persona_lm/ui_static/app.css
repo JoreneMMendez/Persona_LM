@@ -253,3 +253,18 @@ details.card > summary { cursor: pointer; font-weight: 600; }
 .personas h3 { margin: 0; } .row.between { justify-content: space-between; }
 .persona.on { border-color: var(--accent); }
 .persona-text { margin: var(--s2) 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+
+/* ---- Stage U4a: Data page (wizard steps, audit, verdict) */
+.dstep { display: grid; grid-template-columns: auto 1fr; gap: var(--s3); align-items: start; }
+.dstep + .dstep { margin-top: var(--s4); padding-top: var(--s4); border-top: 1px solid var(--line); }
+.dmark { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: .85rem; background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-2); }
+.dstep.done .dmark { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.dstep.next .dmark { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.dstep h3 { margin: 0 0 4px; }
+.dstep p { margin: 0 0 var(--s2); }
+.dcmd { display: flex; gap: var(--s2); align-items: stretch; flex-wrap: wrap; }
+.dcmd code { flex: 1; min-width: 200px; padding: var(--s2) var(--s3); border: 1px solid var(--line); border-radius: var(--r); background: var(--surface-2); overflow-wrap: anywhere; white-space: pre-wrap; }
+.dstats { display: grid; gap: var(--s3); grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); margin: var(--s3) 0; }
+.dstats > div { padding: var(--s3); border: 1px solid var(--line); border-radius: var(--r); background: var(--surface-2); }
+.dstats .num { font-size: 1.25rem; font-weight: 700; display: block; overflow-wrap: anywhere; }
+.dkv { display: flex; gap: var(--s2); flex-wrap: wrap; }

@@ -1,4 +1,4 @@
-"""The local web UI server (stages U0 to U3b). Python standard library only, offline, this computer only.
+"""The local web UI server (stages U0 to U4a). Python standard library only, offline, this computer only.
 
     python -m persona_lm ui                 # opens http://127.0.0.1:8777/ in your browser
     python -m persona_lm ui --port 9000 --no-open --root C:\\path\\to\\project
@@ -34,6 +34,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from . import __version__
 from .ui_chat import ChatHub, ChatProblem
+from .ui_data import DataHub, DataProblem
 from .ui_memory import MemoryHub, MemoryHubProblem
 from .ui_mind import MindHub, MindProblem
 
@@ -52,6 +53,8 @@ STATIC = {
     "/static/chat.js": ("chat.js", "text/javascript; charset=utf-8"),
     "/static/memory.js": ("memory.js", "text/javascript; charset=utf-8"),
     "/static/mind.js": ("mind.js", "text/javascript; charset=utf-8"),
+    "/static/data.js": ("data.js", "text/javascript; charset=utf-8"),
+    "/static/personas.js": ("personas.js", "text/javascript; charset=utf-8"),
     "/static/favicon.svg": ("favicon.svg", "image/svg+xml"),
 }
 INDEX_FILE = "index.html"
@@ -75,7 +78,7 @@ class PathGuard:
     # count files; the private/ folder inside data_msgr is blocked below.
     ALLOWED_TOP = (
         "memory.json", "chat_archive.jsonl", "mood.json", "person_card.md", "persona_settings.json", "project.json", "identity_core", "work", "work2", "work3",
-        "data_chat", "data_pre", "saved_chats", "data_msgr", "data_msgr_chats", "data_msgr_archive", "exports", "docs", "HANDOFF.md", "README.md",
+        "data_chat", "data_chat4096", "data_pre", "saved_chats", "data_msgr", "data_msgr_chats", "data_msgr_archive", "exports", "docs", "HANDOFF.md", "README.md",
     )
 
     def __init__(self, root):
@@ -145,7 +148,7 @@ SECTIONS = [
     {"id": "memory", "label": "Memory", "stage": "U2", "icon": "graph", "ready": True},
     {"id": "mood", "label": "Mood and Person", "stage": "U2", "icon": "heart", "ready": True},
     {"id": "prompt", "label": "Personas", "stage": "U3", "icon": "layers", "ready": True},
-    {"id": "data", "label": "Data", "stage": "U4", "icon": "database"},
+    {"id": "data", "label": "Data", "stage": "U4", "icon": "database", "ready": True},
     {"id": "training", "label": "Training", "stage": "U5", "icon": "chart"},
     {"id": "identity", "label": "Identity", "stage": "U6", "icon": "shield"},
     {"id": "proposals", "label": "Proposals", "stage": "U6", "icon": "inbox"},
@@ -169,6 +172,7 @@ class UIState:
         self.chat = ChatHub(self.guard)
         self.memory = MemoryHub(self.guard)
         self.mind = MindHub(self.guard)
+        self.data = DataHub(self.guard)
 
     def allowed_hosts(self):
         return ("127.0.0.1:%d" % self.port, "localhost:%d" % self.port)
@@ -178,7 +182,7 @@ class UIState:
 
     def info(self):
         return {"name": "PersonaLM", "version": __version__, "project": os.path.basename(self.guard.root) or self.guard.root,
-                "sections": SECTIONS, "stage": "U3b", "uptime_s": int(time.time() - self.started)}
+                "sections": SECTIONS, "stage": "U4a", "uptime_s": int(time.time() - self.started)}
 
     def privacy(self):
         items = []
@@ -315,6 +319,8 @@ def make_handler(state):
                     return self._memory(path, url, None)
                 if path in MIND_GET:
                     return self._mind(path, None)
+                if path in DATA_GET:
+                    return self._data(path, url)
                 return self._error(404, "no such route")
             if not self._gate(False):
                 return
@@ -338,6 +344,21 @@ def make_handler(state):
                     out = {"/api/memory/add": h.add, "/api/memory/edit": h.edit, "/api/memory/forget": h.forget, "/api/memory/maintain": h.maintain}[path](body)
                 return self._json(200, {"ok": True, **out})
             except MemoryHubProblem as e:
+                return self._error(e.code, str(e))
+
+        def _data(self, path, url):
+            """Data page: read only, counts and verdicts, never message text (see ui_data.py)."""
+            h = state.data
+            qs = parse_qs(url.query)
+            try:
+                if path == "/api/data/overview":
+                    out = h.overview()
+                elif path == "/api/data/audit":
+                    out = h.audit(qs.get("folder", ["data_msgr"])[0])
+                else:
+                    out = h.report(qs.get("folder", ["data_chat"])[0], qs.get("size", ["s30m"])[0])
+                return self._json(200, {"ok": True, **out})
+            except DataProblem as e:
                 return self._error(e.code, str(e))
 
         def _mind(self, path, body):
@@ -438,8 +459,9 @@ MEMORY_POST = ["/api/memory/add", "/api/memory/edit", "/api/memory/forget", "/ap
 PERSONA_GET = ["/api/personas"]
 PERSONA_POST = ["/api/personas/use"]
 MIND_GET = ["/api/graph", "/api/mood", "/api/person"]
+DATA_GET = ["/api/data/audit", "/api/data/overview", "/api/data/report"]
 MIND_POST = ["/api/person/add", "/api/person/edit", "/api/person/remove"]
-ROUTES = {"GET": ["/", "/api/health", "/api/info", "/api/privacy"] + CHAT_GET + PERSONA_GET + MEMORY_GET + MIND_GET + sorted(STATIC), "POST": ["/api/ping"] + CHAT_POST + PERSONA_POST + MEMORY_POST + MIND_POST}
+ROUTES = {"GET": ["/", "/api/health", "/api/info", "/api/privacy"] + CHAT_GET + PERSONA_GET + MEMORY_GET + MIND_GET + DATA_GET + sorted(STATIC), "POST": ["/api/ping"] + CHAT_POST + PERSONA_POST + MEMORY_POST + MIND_POST}
 
 
 def make_server(root=".", host="127.0.0.1", port=DEFAULT_PORT, token=None):

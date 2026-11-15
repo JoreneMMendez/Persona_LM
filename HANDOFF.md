@@ -51,7 +51,8 @@ Rebuilt on 2026-11-15 because the previous copy had been overwritten by notes fr
 - 2026-11-15: old-chat archive (`--archive`), `clean_chat.py` merge mode, s30m setup, s30m chat fine-tune run (overfit, see section 4).
 - Stage U3a (2026-11-15): web UI Prompt panel. See "Newest state: web UI U3a" below.
 - Stage U3b (2026-11-15): web UI personas page and mask switcher. See "Newest state: web UI U3b" below.
-- Tests: 688 after U3b (`python -m unittest discover -s tests`, 2 skipped without PyTorch); `test_handoff.py` needs this file.
+- Stage U4a (2026-11-15): web UI Data page, part 1. See "Newest state: web UI U4a" below.
+- Tests: 705 after U4a (688 after U3b; `python -m unittest discover -s tests`, 2 skipped without PyTorch); `test_handoff.py` needs this file.
 
 ## 6. Known problems
 - Chat quality is poor at the overfit checkpoint (section 4).
@@ -135,3 +136,16 @@ Next stage: U4a (Data page part 1: Messenger scan/import wizard, privacy audit, 
 - SAFEGUARD NOTE: fourth owner-side write (after memory, Person card, and opt-in archive). Only the page's own button reaches it; chat text goes through say() so "/persona joker" typed in Chat is only a message (tested). Identity, proposals, approvals untouched.
 - Limits: not checked in a real browser (none in the build session): run the browser check once. Only the core loaded in Chat can be switched; other cores are read only. A mask whose text is too long for the model's window makes the next send fail with a clear message (nothing is kept) until you take it off. A trained version attached to a mask is NOT swapped in by the UI (the typed command does not either; only prompt text changes).
 - Run: `python -m persona_lm ui --root C:\Users\user\persona_lm_project`, Chat > Identity core tab > load, then open Personas.
+
+## Newest state: web UI U4a (Data page, part 1), 2026-11-15
+Next stage: U4b (cleaner + duplicate report). `docs/UI_PROMPT.md` has the plan.
+- Built: sidebar "Data" page. (1) Import wizard: 5 steps (scan, import, audit, prepare, report) marked done / NEXT from what exists on disk, each with the exact PowerShell command and a Copy button. (2) Privacy audit: reads `data_msgr/stats.json` only and shows anonymised yes/no, leaks, suspicious, masked counts, dropped kinds, a verdict (ok / warn / bad). (3) Data-report verdict for one token folder + model size: tokens, loss tokens, tokens per parameter, tokenizer fingerprint check against `work/tok.json`, validation warning, and steps for about 3 passes (batch 1, accum 4).
+- DESIGN DECISION (safeguard kept): the Messenger scan and import are NOT run from the UI. The raw export is outside the project and the hard rules say the UI never reads it. The wizard shows the commands and checks what they produced. Running the scan from the page would need a new owner decision (see below).
+- Files: added `persona_lm/ui_data.py` (DataHub), `ui_static/data.js`, `tests/test_ui_u4a.py` (17 tests). Changed `ui_server.py` (routes, STATIC, stage name, `data_chat4096` added to PathGuard.ALLOWED_TOP so its token counts can be shown), `app.js`, `app.css`, `tests/test_ui_u0.py` (stage name).
+- Endpoints (GET only, token + Host/Origin): `/api/data/overview`, `/api/data/audit`, `/api/data/report?folder=&size=`. Folder names come from fixed lists (IMPORT_DIRS, TOKEN_DIRS); the page cannot send a path. No POST route was added.
+- Privacy: no message text, name or number is sent. `private/`, `train.jsonl`, `val.jsonl` are never opened. `persona_settings.json` is read for one yes/no (export folder remembered); its path and names are not sent. A test plants a secret in private/, train.jsonl and audit.txt and checks it never appears.
+- BUG FIXED: `/static/personas.js` (U3b) was missing from `STATIC` in ui_server.py, so the browser got a 404, the module graph failed and NO page rendered (stuck on "Connecting..."). Added, plus a test that every .js/.css file and every `./x.js` import is served.
+- Browser check: done once with headless Chromium on the Data page (light, dark, 380 px wide, no console errors, no sideways scroll). The other pages were not re-checked after the personas.js fix: open each once on your PC.
+- Limits: the audit view shows only what stats.json holds. Reviewing `private/audit.txt` and `capitalised_words.txt` is done by opening those files yourself. Data-report on a big pretraining folder (`data_pre`) scans the whole file and can take a few seconds.
+- Open question for the owner: allow the page to run `messenger-scan` on an export folder that is OUTSIDE the project (read only)? That weakens the "UI never reads the raw export" rule, so it is not done without an explicit yes.
+- Run: `python -m persona_lm ui --root C:\Users\user\persona_lm_project`, open Data.
