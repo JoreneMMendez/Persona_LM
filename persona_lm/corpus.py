@@ -238,6 +238,18 @@ def clean_taglish(src, dst):
 
 
 # ------------------------------------------------------------------ one step each
+def _need_new_taglish(mod):
+    """The old grab_taglish.py streamed through `datasets` and sat at 0% for up to an hour. Never run it again."""
+    try:
+        with open(mod.__file__, encoding="utf-8") as f:
+            old = "load_dataset" in f.read()
+    except OSError:
+        old = False
+    if old:
+        raise CorpusError("grab_taglish.py in the project folder is the OLD version (it stalls at 0%). "
+                          "Copy the new grab_taglish.py into the project folder, then press Start again.")
+
+
 def _download(lang, mb, stop):
     spec = LANGS[lang]
     cap = (mb if mb is not None else spec["default_mb"]) * 1_000_000
@@ -268,6 +280,7 @@ def _download(lang, mb, stop):
         mod.main()
     else:
         mod = _script("grab_taglish")
+        _need_new_taglish(mod)
         mod.OUT_PATH = part
         mod.main(int(cap / 1_000_000) if cap else 0)
     stop.check()
