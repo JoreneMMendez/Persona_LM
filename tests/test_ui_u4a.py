@@ -73,7 +73,7 @@ class Gate(DataBase):
     def test_no_post_route_and_no_write_routes(self):
         for p in ("/api/data/overview", "/api/data/audit", "/api/data/report", "/api/data/import", "/api/data/scan", "/api/data/run"):
             self.assertEqual(self.api("POST", p, {"cmd": "del *", "path": "../x"})[0], 404, p)
-        self.assertEqual([p for p in UI.ROUTES["POST"] if "/data" in p], [])
+        self.assertEqual([p for p in UI.ROUTES["POST"] if "/data" in p], ["/api/data/clean-apply"])       # U4b: the only data write, see test_ui_u4b.py
 
     def test_routes_are_listed(self):
         for p in ("/api/data/overview", "/api/data/audit", "/api/data/report"):

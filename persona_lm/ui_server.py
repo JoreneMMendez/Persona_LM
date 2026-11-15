@@ -1,4 +1,4 @@
-"""The local web UI server (stages U0 to U4a). Python standard library only, offline, this computer only.
+"""The local web UI server (stages U0 to U4b). Python standard library only, offline, this computer only.
 
     python -m persona_lm ui                 # opens http://127.0.0.1:8777/ in your browser
     python -m persona_lm ui --port 9000 --no-open --root C:\\path\\to\\project
@@ -182,7 +182,7 @@ class UIState:
 
     def info(self):
         return {"name": "PersonaLM", "version": __version__, "project": os.path.basename(self.guard.root) or self.guard.root,
-                "sections": SECTIONS, "stage": "U4a", "uptime_s": int(time.time() - self.started)}
+                "sections": SECTIONS, "stage": "U4b", "uptime_s": int(time.time() - self.started)}
 
     def privacy(self):
         items = []
@@ -355,6 +355,10 @@ def make_handler(state):
                     out = h.overview()
                 elif path == "/api/data/audit":
                     out = h.audit(qs.get("folder", ["data_msgr"])[0])
+                elif path == "/api/data/clean-preview":
+                    out = h.clean_preview({k: v[0] for k, v in qs.items()})
+                elif path == "/api/data/repeats":
+                    out = h.repeats({k: v[0] for k, v in qs.items()}, text=qs.get("text", [""])[0] == "1")
                 else:
                     out = h.report(qs.get("folder", ["data_chat"])[0], qs.get("size", ["s30m"])[0])
                 return self._json(200, {"ok": True, **out})
@@ -438,6 +442,11 @@ def make_handler(state):
                     return self._json(200, {"ok": True, **state.chat.use_persona(body.get("name"))})
                 except ChatProblem as e:
                     return self._error(e.code, str(e))
+            if path == "/api/data/clean-apply":
+                try:
+                    return self._json(200, {"ok": True, **state.data.clean_apply(body)})
+                except DataProblem as e:
+                    return self._error(e.code, str(e))
             if path in MEMORY_POST:
                 return self._memory(path, urlsplit(self.path), body)
             if path in MIND_POST:
@@ -459,9 +468,10 @@ MEMORY_POST = ["/api/memory/add", "/api/memory/edit", "/api/memory/forget", "/ap
 PERSONA_GET = ["/api/personas"]
 PERSONA_POST = ["/api/personas/use"]
 MIND_GET = ["/api/graph", "/api/mood", "/api/person"]
-DATA_GET = ["/api/data/audit", "/api/data/overview", "/api/data/report"]
+DATA_GET = ["/api/data/audit", "/api/data/clean-preview", "/api/data/overview", "/api/data/repeats", "/api/data/report"]
+DATA_POST = ["/api/data/clean-apply"]
 MIND_POST = ["/api/person/add", "/api/person/edit", "/api/person/remove"]
-ROUTES = {"GET": ["/", "/api/health", "/api/info", "/api/privacy"] + CHAT_GET + PERSONA_GET + MEMORY_GET + MIND_GET + DATA_GET + sorted(STATIC), "POST": ["/api/ping"] + CHAT_POST + PERSONA_POST + MEMORY_POST + MIND_POST}
+ROUTES = {"GET": ["/", "/api/health", "/api/info", "/api/privacy"] + CHAT_GET + PERSONA_GET + MEMORY_GET + MIND_GET + DATA_GET + sorted(STATIC), "POST": ["/api/ping"] + CHAT_POST + PERSONA_POST + MEMORY_POST + MIND_POST + DATA_POST}
 
 
 def make_server(root=".", host="127.0.0.1", port=DEFAULT_PORT, token=None):

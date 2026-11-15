@@ -52,7 +52,8 @@ Rebuilt on 2026-11-15 because the previous copy had been overwritten by notes fr
 - Stage U3a (2026-11-15): web UI Prompt panel. See "Newest state: web UI U3a" below.
 - Stage U3b (2026-11-15): web UI personas page and mask switcher. See "Newest state: web UI U3b" below.
 - Stage U4a (2026-11-15): web UI Data page, part 1. See "Newest state: web UI U4a" below.
-- Tests: 705 after U4a (688 after U3b; `python -m unittest discover -s tests`, 2 skipped without PyTorch); `test_handoff.py` needs this file.
+- Stage U4b (2026-11-15): web UI Data page, part 2 (the cleaner). See "Newest state: web UI U4b" below.
+- Tests: 722 after U4b (705 after U4a, 688 after U3b; `python -m unittest discover -s tests`, 2 skipped without PyTorch); `test_handoff.py` needs this file.
 
 ## 6. Known problems
 - Chat quality is poor at the overfit checkpoint (section 4).
@@ -149,3 +150,14 @@ Next stage: U4b (cleaner + duplicate report). `docs/UI_PROMPT.md` has the plan.
 - Limits: the audit view shows only what stats.json holds. Reviewing `private/audit.txt` and `capitalised_words.txt` is done by opening those files yourself. Data-report on a big pretraining folder (`data_pre`) scans the whole file and can take a few seconds.
 - Open question for the owner: allow the page to run `messenger-scan` on an export folder that is OUTSIDE the project (read only)? That weakens the "UI never reads the raw export" rule, so it is not done without an explicit yes.
 - Run: `python -m persona_lm ui --root C:\Users\user\persona_lm_project`, open Data.
+
+## Newest state: web UI U4b (Data page, part 2: the cleaner), 2026-11-15
+Next stage: U5a (Training page, part 1). `docs/UI_PROMPT.md` has the plan.
+- Built: "Clean the chats" card on the Data page. Settings (max short / longer identical reply, keep other people's lines) -> Preview (in memory, writes nothing): examples before -> after for train and val, what was removed (call notices, other people's group lines, repeated short/long replies, no-target examples), chats -> files, and a repeated-replies histogram before / after (buckets 2-3, 4-10, 11-50, over 50 times; top-10 share). Button "Show the most repeated replies" shows reply TEXT (opt-in). Button "Write data_msgr_chats" (two clicks) writes the previewed plan and shows the `prepare` command.
+- Refactor: `clean_chat.py` now has `load_dir`, `run_clean`, `write_output`; `main()` calls them (same output, its 13 tests pass). The UI loads the project's own `clean_chat.py` and calls those functions, so the page and `python clean_chat.py --dir data_msgr` write identical files (a test compares them). Only `--dir data_msgr` mode is in the UI; `--input FILE ...` stays in the terminal.
+- Files: added `tests/test_ui_u4b.py` (17 tests). Changed `clean_chat.py`, `persona_lm/ui_data.py`, `ui_server.py` (3 routes, stage name), `ui_static/data.js`, `tests/test_ui_u0.py` (route table, DATA whitelist), `tests/test_ui_u4a.py` (the one allowed data POST).
+- Endpoints: GET `/api/data/clean-preview`, `/api/data/repeats[&text=1]`; POST `/api/data/clean-apply {plan_id}`. Token + Host/Origin on all. Params are whole numbers 0 to 100 (else 400).
+- SAFEGUARD NOTE (fifth owner-side write): clean-apply writes ONLY `data_msgr_chats` (through PathGuard, so a link out of the project is refused with 403), only for a plan that was previewed on `train.jsonl` / `val.jsonl` that have not changed since (size + mtime, else 409), once per plan. It never deletes: an existing `data_msgr_chats` is MOVED to `_to_delete\data_msgr_chats_DATE_TIME` (the terminal command deletes old chat files in it; the page does not). Chat text cannot reach it (tested).
+- PRIVACY NOTE: preview and the default repeats report send counts only. The opt-in text view is the only place chat text reaches the page: refused (403) if stats.json says the import was not anonymised, cut to 30 characters, at most 15 rows, text from the anonymised files only. Say if you want this removed.
+- Limits: the cleaner reads the whole `train.jsonl` into the server's memory (refused over 400 MB; use the terminal then); preview and apply each take a few seconds on a big import. Browser check done once (headless Chromium: preview, repeats text, write, light, dark, 380 px wide, no console errors; the earlier pages were not re-checked).
+- Run: `python -m persona_lm ui --root C:\\Users\\user\\persona_lm_project`, Data > Clean the chats > Preview.

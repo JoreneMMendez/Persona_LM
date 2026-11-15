@@ -1,4 +1,5 @@
 // PersonaLM UI, stage U4a: the Data page. Read only: it shows what exists, the privacy audit (COUNTS from stats.json) and the data-report verdict.
+// U4b adds the cleaner: preview (nothing written), the repeated-reply report, and one owner button that writes data_msgr_chats for the previewed plan.
 // The Messenger scan and import stay in the terminal (the raw export is outside the project and this UI never reads it); the wizard shows the exact commands.
 // All text from the server goes on the page with textContent only (through h()). No message text or names ever come from these routes.
 import { h, api, toast } from './app.js';
@@ -53,8 +54,10 @@ export async function dataPage(main) {
 
     const auditBox = h('div', { class: 'card', id: 'audit' }, h('h2', null, 'Privacy audit'), h('p', { class: 'muted', role: 'status' }, 'Loading\u2026'));
     const repBox = h('div', { class: 'card', id: 'report' }, h('h2', null, 'Data-report verdict'));
-    root.replaceChildren(head, wiz, auditBox, repBox);
+    const cleanBox = h('div', { class: 'card', id: 'clean' });
+    root.replaceChildren(head, wiz, auditBox, cleanBox, repBox);
     paintAudit(auditBox);
+    paintClean(cleanBox, ov);
     paintReport(repBox, ov);
   }
 
@@ -80,6 +83,91 @@ export async function dataPage(main) {
       table('Masked by the anonymiser', a.masked, 'Nothing was masked.'), table('Message kinds dropped', a.dropped_message_kinds, 'None.'));
     if (a.size_verdict) box.append(h('p', { class: 'small muted' }, a.size_verdict));
     box.append(h('p', { class: 'small muted' }, a.note + ' To review the details, open data_msgr\\private\\audit.txt in a text editor yourself; the page will not show it.'));
+  }
+
+  function paintClean(box, ov) {
+    box.append(h('h2', null, 'Clean the chats'),
+      h('p', { class: 'muted small' }, 'Removes call and group notices, drops other people\u2019s lines as answers in group chats, and keeps each identical reply only a few times, so the model does not memorise stock lines. It writes one numbered file per chat into data_msgr_chats. Press Preview first: that changes nothing.'));
+    const imp = ov.imports.find((i) => i.name === 'data_msgr');
+    if (!imp || !imp.train_jsonl) { box.append(h('div', { class: 'callout' }, h('p', null, 'No import yet (data_msgr\\train.jsonl is missing). Do wizard steps 1 and 2 first.'))); return; }
+    const mk = (id, label, v, tip) => {
+      const input = h('input', { id, type: 'number', min: '0', max: '100', value: String(v), title: tip });
+      return { input, wrap: h('div', { class: 'field', style: 'max-width:200px' }, h('label', { for: id }, label), input) };
+    };
+    const dShort = mk('cd1', 'Keep a short reply at most', 3, 'Replies of 25 characters or less. 0 = no limit.');
+    const dLong = mk('cd2', 'Keep a longer reply at most', 5, '0 = no limit.');
+    const others = h('input', { id: 'ck', type: 'checkbox' });
+    const prev = h('button', { class: 'btn primary', type: 'button' }, 'Preview');
+    const out = h('div', { 'aria-live': 'polite' });
+    box.append(h('div', { class: 'row' }, dShort.wrap, dLong.wrap, h('label', { class: 'row', for: 'ck', style: 'gap:6px' }, others, 'Keep other people\u2019s lines in group chats')), h('div', { class: 'row', style: 'margin-top:8px' }, prev), out);
+    const qs = () => 'max_dup=' + encodeURIComponent(dShort.input.value) + '&max_dup_long=' + encodeURIComponent(dLong.input.value) + '&keep_others=' + (others.checked ? '1' : '0');
+    prev.addEventListener('click', async () => {
+      prev.disabled = true;
+      out.replaceChildren(h('p', { class: 'muted', role: 'status' }, 'Working on it (a few seconds)\u2026'));
+      try { paintPlan(out, await api('/api/data/clean-preview?' + qs()), qs); }
+      catch (e) { out.replaceChildren(h('div', { class: 'callout bad', role: 'alert' }, h('p', null, e.message))); }
+      prev.disabled = false;
+    });
+  }
+
+  const REMOVED = { system_msgs_removed: 'call / group notices removed', dropped_no_target: 'examples with nothing to learn from', dropped_other_group_speaker: 'other people\u2019s lines in group chats',
+    dropped_repeated_short: 'repeated short replies', dropped_repeated_long: 'repeated longer replies' };
+
+  function replyBlock(title, r) {
+    const max = Math.max(1, ...r.buckets.map((b) => b.examples));
+    return h('div', { class: 'card' }, h('h3', null, title),
+      h('p', { class: 'small' }, fmt(r.total) + ' answers, ' + fmt(r.distinct) + ' different. The 10 most common ones make up ' + Math.round(r.top10_share * 100) + '% of them.'),
+      ...r.buckets.map((b) => h('div', { class: 'row', style: 'gap:8px;flex-wrap:nowrap' },
+        h('span', { class: 'small', style: 'width:110px;flex:none' }, b.label),
+        h('span', { class: 'meter', style: 'flex:1;width:auto' }, h('span', { class: 'meter-fill', style: 'width:' + Math.round(100 * b.examples / max) + '%' })),
+        h('span', { class: 'small muted', style: 'width:170px;flex:none;text-align:right' }, fmt(b.replies) + ' replies, ' + fmt(b.examples) + ' examples'))));
+  }
+
+  function paintPlan(out, p, qs) {
+    const kids = [];
+    const tr = p.splits.train, va = p.splits.val;
+    kids.push(h('div', { class: 'dstats' }, stat('Training examples', fmt(tr.before) + ' \u2192 ' + fmt(tr.after)), stat('Validation examples', fmt(va.before) + ' \u2192 ' + fmt(va.after)),
+      stat('Chats', fmt(p.chats.before) + ' \u2192 ' + fmt(p.chats.with_train_file) + ' files')));
+    const rem = Object.keys(REMOVED).map((k) => [k, tr.removed[k], va.removed[k]]).filter((r) => r[1] || r[2]);
+    kids.push(h('h3', null, 'What was removed'), rem.length
+      ? h('div', { class: 'dkv' }, rem.map((r) => h('span', { class: 'badge' }, REMOVED[r[0]] + ': ' + fmt(r[1]) + ' train, ' + fmt(r[2]) + ' val')))
+      : h('p', { class: 'small muted' }, 'Nothing needed removing.'));
+    if (p.chats.val_only) kids.push(h('div', { class: 'callout warn' }, h('p', null, p.chats.val_only + ' chat(s) would have validation examples but no training file left, so their validation part is not written.')));
+    kids.push(h('div', { class: 'grid' }, replyBlock('Repeated replies before', p.replies.before), replyBlock('Repeated replies after', p.replies.after)));
+
+    const txt = h('div', { 'aria-live': 'polite' });
+    const show = h('button', { class: 'btn', type: 'button' }, 'Show the most repeated replies');
+    show.addEventListener('click', async () => {
+      show.disabled = true;
+      try {
+        const r = await api('/api/data/repeats?text=1&' + qs());
+        txt.replaceChildren(h('p', { class: 'small muted' }, r.note), r.top.length ? h('ul', { class: 'list' }, r.top.map((t) => h('li', null, h('div', { class: 'grow name' }, t.reply), h('span', { class: 'badge' }, t.before + ' \u2192 ' + t.after)))) : h('p', { class: 'small muted' }, 'No reply is repeated.'));
+      } catch (e) { txt.replaceChildren(h('div', { class: 'callout bad', role: 'alert' }, h('p', null, e.message))); show.disabled = false; }
+    });
+    kids.push(h('div', { class: 'row' }, show), txt);
+
+    const o = p.output;
+    const apply = h('button', { class: 'btn primary', type: 'button' }, 'Write ' + o.folder);
+    let armed = false;
+    const result = h('div', { 'aria-live': 'polite' });
+    apply.addEventListener('click', async () => {
+      if (!o.usable) { toast(o.folder + ' cannot be used (it points outside the project).', 'bad'); return; }
+      if (!armed) { armed = true; apply.textContent = 'Yes, write it now'; setTimeout(() => { if (armed) { armed = false; apply.textContent = 'Write ' + o.folder; } }, 6000); return; }
+      armed = false; apply.disabled = true;
+      try {
+        const r = await api('/api/data/clean-apply', { plan_id: p.plan_id });
+        toast('Written: ' + r.chat_files + ' chat files', 'ok');
+        const cmd = r.next_command;
+        const c = h('button', { class: 'btn', type: 'button' }, 'Copy'); c.addEventListener('click', async () => { try { await navigator.clipboard.writeText(cmd); toast('Copied', 'ok'); } catch (e) { toast('Could not copy', 'bad'); } });
+        result.replaceChildren(h('div', { class: 'callout ok' }, h('p', null, 'Wrote ' + fmt(r.chat_files) + ' chat files (' + fmt(r.train_examples) + ' training and ' + fmt(r.val_examples) + ' validation examples) to ' + r.written + '.' + (r.moved_old_to ? ' The older files were moved to ' + r.moved_old_to + '.' : ''))),
+          h('p', { class: 'small muted' }, 'Next, turn them into token files:'), h('div', { class: 'dcmd' }, h('code', null, cmd), c));
+      } catch (e) { result.replaceChildren(h('div', { class: 'callout bad', role: 'alert' }, h('p', null, e.message))); apply.disabled = false; }
+    });
+    kids.push(h('h3', null, 'Write the files'),
+      h('p', { class: 'small muted' }, o.exists && o.train_files ? o.folder + ' already holds ' + o.train_files + ' chat files. They are moved to _to_delete\\ (not deleted) first.' : o.folder + ' is empty or missing, so nothing is moved.'),
+      h('div', { class: 'row' }, apply), result,
+      h('p', { class: 'small muted' }, 'Same result as: ' + p.command));
+    out.replaceChildren(...kids);
   }
 
   function paintReport(box, ov) {

@@ -115,6 +115,59 @@ def write_jsonl(path, examples):
             f.write(json.dumps(ex, ensure_ascii=False) + "\n")
 
 
+def load_dir(d):
+    """Reads d/train.jsonl and d/val.jsonl (the output of messenger-import). Returns (raw_train, raw_val): lists of (order, chat id, [examples])."""
+    raw_train, raw_val = [], []
+    for split, bucket in (("train", raw_train), ("val", raw_val)):
+        path = os.path.join(d, split + ".jsonl")
+        if not os.path.exists(path):
+            if split == "train":
+                sys.exit("not found: " + path)
+            continue
+        by_chat = collections.OrderedDict()
+        for ex in read_jsonl(path):
+            by_chat.setdefault(str(ex.get("chat", "unknown")), []).append(ex)
+        for cid in sorted(by_chat, key=num_key):
+            bucket.append(((0, num_key(cid)), cid, by_chat[cid]))
+    return raw_train, raw_val
+
+
+def run_clean(raw_train, raw_val, keep_others, max_dup, max_dup_long):
+    """The cleaning itself, in memory, nothing written. Returns (cleaned, stats). Note: it edits the examples it keeps."""
+    stats = {"train": collections.Counter(), "val": collections.Counter()}
+    cleaned = {"train": collections.OrderedDict(), "val": {}}
+    for split, bucket in (("train", raw_train), ("val", raw_val)):
+        seen = collections.Counter()
+        for order, cid, exs in sorted(bucket, key=lambda b: b[0]):
+            out = [e for e in (clean_example(x, keep_others, max_dup, max_dup_long, seen, stats[split]) for x in exs) if e]
+            if out:
+                cleaned[split][(order, cid)] = out
+    return cleaned, stats
+
+
+def write_output(out_dir, cleaned):
+    """Writes out_dir/train/chat_NNN.jsonl, val/chat_NNN.jsonl and index.json (earlier chat files in it are removed first). Returns (index, lost_val)."""
+    for sub in ("train", "val"):                      # start clean: files from an earlier run must not stay
+        d = os.path.join(out_dir, sub)
+        if os.path.isdir(d):
+            for fn in os.listdir(d):
+                if fn.endswith(".jsonl"):
+                    os.remove(os.path.join(d, fn))
+    index = []
+    for n, key in enumerate(cleaned["train"], 1):
+        name = "chat_%03d.jsonl" % n
+        write_jsonl(os.path.join(out_dir, "train", name), cleaned["train"][key])
+        v = cleaned["val"].get(key, [])
+        if v:
+            write_jsonl(os.path.join(out_dir, "val", name), v)
+        index.append({"number": n, "file": name, "original_chat": key[1], "train_examples": len(cleaned["train"][key]), "val_examples": len(v)})
+    lost_val = [k[1] for k in cleaned["val"] if k not in cleaned["train"]]
+    os.makedirs(out_dir, exist_ok=True)
+    with open(os.path.join(out_dir, "index.json"), "w", encoding="utf-8") as f:
+        json.dump({"files": index, "val_chats_without_train_file": lost_val}, f, indent=2, ensure_ascii=False)
+    return index, lost_val
+
+
 def main():
     ap = argparse.ArgumentParser(description="clean chat data and write one numbered file per chat")
     ap.add_argument("--input", nargs="+", help="ready-made .jsonl files (chat/session/messages); val is split off automatically")
@@ -141,46 +194,11 @@ def main():
                 if va:
                     raw_val.append(((fi, num_key(cid)), cid, va))
     else:
-        for split, bucket in (("train", raw_train), ("val", raw_val)):
-            path = os.path.join(a.dir, split + ".jsonl")
-            if not os.path.exists(path):
-                if split == "train":
-                    sys.exit("not found: " + path)
-                continue
-            by_chat = collections.OrderedDict()
-            for ex in read_jsonl(path):
-                by_chat.setdefault(str(ex.get("chat", "unknown")), []).append(ex)
-            for cid in sorted(by_chat, key=num_key):
-                bucket.append(((0, num_key(cid)), cid, by_chat[cid]))
+        raw_train, raw_val = load_dir(a.dir)
 
-    stats = {"train": collections.Counter(), "val": collections.Counter()}
-    cleaned = {"train": collections.OrderedDict(), "val": {}}
-    for split, bucket in (("train", raw_train), ("val", raw_val)):
-        seen = collections.Counter()
-        for order, cid, exs in sorted(bucket, key=lambda b: b[0]):
-            out = [e for e in (clean_example(x, a.keep_others, a.max_dup, a.max_dup_long, seen, stats[split]) for x in exs) if e]
-            if out:
-                cleaned[split][(order, cid)] = out
+    cleaned, stats = run_clean(raw_train, raw_val, a.keep_others, a.max_dup, a.max_dup_long)
 
-    # numbering: every chat that still has training examples, in input order
-    for sub in ("train", "val"):                      # start clean: files from an earlier run must not stay
-        d = os.path.join(a.out, sub)
-        if os.path.isdir(d):
-            for fn in os.listdir(d):
-                if fn.endswith(".jsonl"):
-                    os.remove(os.path.join(d, fn))
-    index = []
-    for n, key in enumerate(cleaned["train"], 1):
-        name = "chat_%03d.jsonl" % n
-        write_jsonl(os.path.join(a.out, "train", name), cleaned["train"][key])
-        v = cleaned["val"].get(key, [])
-        if v:
-            write_jsonl(os.path.join(a.out, "val", name), v)
-        index.append({"number": n, "file": name, "original_chat": key[1], "train_examples": len(cleaned["train"][key]), "val_examples": len(v)})
-    lost_val = [k[1] for k in cleaned["val"] if k not in cleaned["train"]]
-    os.makedirs(a.out, exist_ok=True)
-    with open(os.path.join(a.out, "index.json"), "w", encoding="utf-8") as f:
-        json.dump({"files": index, "val_chats_without_train_file": lost_val}, f, indent=2, ensure_ascii=False)
+    index, lost_val = write_output(a.out, cleaned)
 
     for split in ("train", "val"):
         s = stats[split]

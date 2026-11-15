@@ -3,17 +3,29 @@
   GET /api/data/overview            what exists (import folder, token folders), the wizard steps with done / NEXT, the exact terminal commands
   GET /api/data/audit               the privacy audit of the Messenger import: COUNTS from stats.json only
   GET /api/data/report?folder=&size=   the data-report verdict for one token folder (same numbers as `data-report`)
+  GET /api/data/clean-preview?max_dup=&max_dup_long=&keep_others=   U4b: what clean_chat.py WOULD do to data_msgr (in memory, writes nothing)
+  GET /api/data/repeats?...&text=1  U4b: the most repeated replies (text only when asked, only if the import was anonymised, cut to 30 characters)
+  POST /api/data/clean-apply {plan_id}   U4b: write data_msgr_chats for the previewed plan (owner's button; old files are MOVED to _to_delete\\)
 
 Rules (tests in tests/test_ui_u4a.py):
-  * No route writes anything and none starts a command. The scan and the import stay in the terminal: the raw Messenger export is
+  * U4a routes write nothing and none starts a command. U4b adds ONE write, clean-apply: it writes only data_msgr_chats (the folder clean_chat.py
+    writes), only for a plan that was previewed on files that have not changed since, and it never deletes: an existing data_msgr_chats is moved
+    to _to_delete\\. It runs clean_chat.py's own functions, so the page and `python clean_chat.py --dir data_msgr` give the same files.
+  * Counts only, except the opt-in repeats?text=1 (see above). Reading train.jsonl for the cleaner happens inside the server; no text is sent otherwise.
+  * (U4a) the scan and import stay in the terminal. The scan and the import stay in the terminal: the raw Messenger export is
     outside the project and the UI never reads it, so the wizard shows the exact commands (with a Copy button) and then checks what
     they produced.
   * Only fixed folder names are accepted (IMPORT_DIRS, TOKEN_DIRS); the page cannot send a path. Every name still goes through PathGuard.
   * The audit reads stats.json only. It never opens private/ (real names, audit.txt), train.jsonl or val.jsonl, so no message text,
     name or phone number can reach the page. persona_settings.json is read for one yes/no ("is an export folder remembered"); its path is not sent.
 """
+import collections
+import hashlib
+import importlib.util
 import json
 import os
+import threading
+import time
 
 from . import report as R
 from .bpe import Tokenizer
@@ -23,6 +35,11 @@ IMPORT_DIRS = ("data_msgr",)
 TOKEN_DIRS = ("data_chat", "data_chat4096", "data_pre")
 TOKENIZER = "work/tok.json"
 DEFAULT_SIZE = "s30m"
+MAX_JSONL = 400_000_000                               # largest train.jsonl / val.jsonl the cleaner will read
+MAX_DUP_LIMIT = 100
+REPEAT_TEXT_ROWS = 15
+REPEAT_TEXT_CHARS = 30
+CLEAN_OUT = "data_msgr_chats"
 MAX_JSON = 2_000_000                                  # stats.json is small; refuse a huge file instead of reading it
 
 
@@ -35,6 +52,8 @@ class DataProblem(Exception):
 class DataHub:
     def __init__(self, guard):
         self.guard = guard
+        self.lock = threading.Lock()
+        self.plans = {}                                   # plan_id -> {"params": ..., "sig": ...}, kept in RAM only
 
     def _clean(self, e):
         return str(e).replace(self.guard.root, ".")
@@ -215,3 +234,178 @@ class DataHub:
                 "examples": s["documents"], "loss_tokens": loss, "params": params, "window": cfg.ctx, "vocab": cfg.vocab_size,
                 "tokens_per_param": round(measure / params, 3), "level": level, "verdict": verdict, "warnings": warnings,
                 "tokenizer": tok, "passes": passes}
+
+    # ================================================================ U4b: the cleaner
+    def _cleaner(self):
+        """clean_chat.py from the project folder (fixed file name), loaded as a module. Its functions are the ones the terminal command uses."""
+        path = os.path.join(self.guard.root, "clean_chat.py")
+        if not os.path.isfile(path):
+            raise DataProblem("clean_chat.py is not in the project folder.", 404)
+        spec = importlib.util.spec_from_file_location("plm_clean_chat", path)
+        mod = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(mod)
+        except Exception as e:
+            raise DataProblem("clean_chat.py could not be loaded: " + self._clean(e), 500)
+        for need in ("load_dir", "run_clean", "write_output"):
+            if not hasattr(mod, need):
+                raise DataProblem("clean_chat.py is an older version (no %s). Copy the newest one from the project zip." % need, 409)
+        return mod
+
+    @staticmethod
+    def _int(v, default, name):
+        try:
+            n = default if v in (None, "") else int(v)
+        except (TypeError, ValueError):
+            raise DataProblem("%s must be a whole number." % name)
+        if n < 0 or n > MAX_DUP_LIMIT:
+            raise DataProblem("%s must be between 0 and %d." % (name, MAX_DUP_LIMIT))
+        return n
+
+    def _params(self, src):
+        keep = src.get("keep_others")
+        return {"max_dup": self._int(src.get("max_dup"), 3, "max_dup"), "max_dup_long": self._int(src.get("max_dup_long"), 5, "max_dup_long"),
+                "keep_others": keep in (True, "1", 1)}
+
+    def _inputs(self):
+        folder = self._path("data_msgr")
+        train, val = os.path.join(folder, "train.jsonl"), os.path.join(folder, "val.jsonl")
+        if not os.path.exists(train):
+            raise DataProblem("No import yet: data_msgr\\train.jsonl is missing. Do wizard steps 1 and 2 first.", 404)
+        sig = []
+        for p in (train, val):
+            if os.path.exists(p):
+                st = os.stat(p)
+                if st.st_size > MAX_JSONL:
+                    raise DataProblem("%s is too big for the page (over %d MB). Run clean_chat.py in the terminal." % (os.path.basename(p), MAX_JSONL // 10 ** 6), 413)
+                sig.append([st.st_size, st.st_mtime_ns])
+            else:
+                sig.append(None)
+        return folder, sig
+
+    def _run(self, params):
+        folder, sig = self._inputs()
+        mod = self._cleaner()
+        try:
+            raw_train, raw_val = mod.load_dir(folder)
+            raw_targets = self._targets(raw_train)
+            cleaned, stats = mod.run_clean(raw_train, raw_val, params["keep_others"], params["max_dup"], params["max_dup_long"])
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            raise DataProblem("The chat files could not be read (%s). Run messenger-import again." % type(e).__name__, 422)
+        return mod, sig, raw_train, raw_targets, cleaned, stats
+
+    @staticmethod
+    def _targets(bucket):
+        """Reply targets (assistant, loss on) of a list of (order, chat, examples), normalised the way clean_chat.py counts them."""
+        out = []
+        for _, _, exs in bucket:
+            for e in exs:
+                t = [m for m in e.get("messages", []) if m.get("train")]
+                if t and t[-1].get("role") == "assistant":
+                    out.append(str(t[-1].get("content", "")).strip().lower())
+        return out
+
+    @staticmethod
+    def _buckets(counter):
+        edges = [("2-3 times", 2, 3), ("4-10 times", 4, 10), ("11-50 times", 11, 50), ("over 50 times", 51, 10 ** 9)]
+        rows = []
+        for label, lo, hi in edges:
+            vals = [n for n in counter.values() if lo <= n <= hi]
+            rows.append({"label": label, "replies": len(vals), "examples": sum(vals)})
+        return rows
+
+    def _reply_summary(self, targets):
+        c = collections.Counter(targets)
+        total = len(targets)
+        top10 = sum(n for _, n in c.most_common(10))
+        return {"total": total, "distinct": len(c), "top10_share": round(top10 / total, 4) if total else 0.0, "buckets": self._buckets(c)}
+
+    def _plan_id(self, params, sig):
+        raw = json.dumps([params, sig], sort_keys=True).encode()
+        return hashlib.sha256(raw).hexdigest()[:16]
+
+    def clean_preview(self, src):
+        params = self._params(src)
+        with self.lock:
+            mod, sig, raw_train, raw_targets, cleaned, stats = self._run(params)
+            kept = [str(m["content"]).strip().lower() for exs in cleaned["train"].values() for e in exs for m in e["messages"] if m.get("train") and m.get("role") == "assistant"]
+            splits = {}
+            for sp in ("train", "val"):
+                s = stats[sp]
+                splits[sp] = {"before": s["examples_in"], "after": s["examples_out"], "removed": {k: s[k] for k in (
+                    "system_msgs_removed", "dropped_no_target", "dropped_other_group_speaker", "dropped_repeated_short", "dropped_repeated_long")}}
+            pid = self._plan_id(params, sig)
+            if len(self.plans) > 20:
+                self.plans.clear()
+            self.plans[pid] = {"params": params, "sig": sig}
+            out_info = self._out_info()
+            kw = " --keep-others" if params["keep_others"] else ""
+            return {"params": params, "plan_id": pid, "splits": splits,
+                    "chats": {"before": len(raw_train), "with_train_file": len(cleaned["train"]), "val_only": len([k for k in cleaned["val"] if k not in cleaned["train"]])},
+                    "replies": {"before": self._reply_summary(raw_targets), "after": self._reply_summary(kept)},
+                    "output": out_info,
+                    "command": "python clean_chat.py --dir data_msgr --max-dup %d --max-dup-long %d%s" % (params["max_dup"], params["max_dup_long"], kw),
+                    "note": "Preview only: nothing was written."}
+
+    def _out_info(self):
+        try:
+            out = self._path(CLEAN_OUT)
+        except DataProblem:
+            return {"folder": CLEAN_OUT, "usable": False, "exists": False, "train_files": 0}
+        tr = os.path.join(out, "train")
+        n = len([f for f in os.listdir(tr) if f.endswith(".jsonl")]) if os.path.isdir(tr) else 0
+        return {"folder": CLEAN_OUT, "usable": True, "exists": os.path.isdir(out), "train_files": n}
+
+    def repeats(self, src, text=False):
+        params = self._params(src)
+        if text:
+            stats = self._json(os.path.join(self._path("data_msgr"), "stats.json")) or {}
+            if not stats.get("anonymized"):
+                raise DataProblem("This import was not anonymised, so the page will not show its text. Look at the file yourself.", 403)
+        with self.lock:
+            mod, sig, raw_train, raw_targets, cleaned, stats = self._run(params)
+            kept = [str(m["content"]).strip().lower() for exs in cleaned["train"].values() for e in exs for m in e["messages"] if m.get("train") and m.get("role") == "assistant"]
+            before, after = collections.Counter(raw_targets), collections.Counter(kept)
+            out = {"params": params, "before": self._reply_summary(raw_targets), "after": self._reply_summary(kept), "text_shown": bool(text)}
+            if text:
+                rows = []
+                for reply, n in before.most_common(REPEAT_TEXT_ROWS):
+                    if n < 2:
+                        break
+                    shown = reply if len(reply) <= REPEAT_TEXT_CHARS else reply[:REPEAT_TEXT_CHARS] + "\u2026"
+                    rows.append({"reply": shown, "before": n, "after": after.get(reply, 0)})
+                out["top"] = rows
+                out["note"] = "Text from your own (anonymised) chats, cut to %d characters, at most %d rows. Shown only because you asked." % (REPEAT_TEXT_CHARS, REPEAT_TEXT_ROWS)
+            return out
+
+    def clean_apply(self, body):
+        pid = body.get("plan_id")
+        if not isinstance(pid, str) or pid not in self.plans:
+            raise DataProblem("Preview first: there is no such plan (the server may have restarted).", 409)
+        plan = self.plans[pid]
+        with self.lock:
+            mod, sig, raw_train, raw_targets, cleaned, stats = self._run(plan["params"])
+            if sig != plan["sig"]:
+                self.plans.pop(pid, None)
+                raise DataProblem("The import files changed since the preview. Preview again.", 409)
+            out = self._path(CLEAN_OUT)
+            moved = None
+            if os.path.isdir(out) and os.listdir(out):
+                stamp = time.strftime("%Y%m%d_%H%M%S")
+                trash = os.path.join(self.guard.root, "_to_delete")
+                os.makedirs(trash, exist_ok=True)
+                dest = os.path.join(trash, "%s_%s" % (CLEAN_OUT, stamp))
+                n = 1
+                while os.path.exists(dest):
+                    n += 1
+                    dest = os.path.join(trash, "%s_%s_%d" % (CLEAN_OUT, stamp, n))
+                os.rename(out, dest)
+                moved = "_to_delete\\" + os.path.basename(dest)
+            try:
+                index, lost_val = mod.write_output(out, cleaned)
+            except OSError as e:
+                raise DataProblem("Could not write %s: %s" % (CLEAN_OUT, self._clean(e)), 500)
+            self.plans.pop(pid, None)
+        return {"written": CLEAN_OUT, "chat_files": len(index), "train_examples": sum(i["train_examples"] for i in index),
+                "val_examples": sum(i["val_examples"] for i in index), "val_chats_without_train_file": len(lost_val), "moved_old_to": moved,
+                "next_command": "python -m persona_lm prepare --kind chat --tokenizer work\\tok.json --data data_msgr_chats\\train --val-data data_msgr_chats\\val --out data_chat"}
