@@ -44,8 +44,9 @@ Rebuilt on 2026-11-15 because the previous copy had been overwritten by notes fr
 - Stage 8a/8b: personas (masks), optional fine-tuned masks.
 - Stage 9a/9b: runtime API with KV cache; export package and local server; GGUF export (not tested inside llama.cpp).
 - Stage U0: local web UI (`python -m persona_lm ui`).
+- Stage U1a (2026-11-15): web UI Chat core. See "Newest state: web UI U1a" below.
 - 2026-11-15: old-chat archive (`--archive`), `clean_chat.py` merge mode, s30m setup, s30m chat fine-tune run (overfit, see section 4).
-- Tests: 262 at last count (README); `test_handoff.py` needs this file.
+- Tests: 612 after U1a (`python -m unittest discover -s tests`, 2 skipped without PyTorch); `test_handoff.py` needs this file.
 
 ## 6. Known problems
 - Chat quality is poor at the overfit checkpoint (section 4).
@@ -76,3 +77,13 @@ Rebuilt on 2026-11-15 because the previous copy had been overwritten by notes fr
 
 ## 12. Next action
 Run `python cleanup_files.py` (dry run, then --apply) now that training is finished. Chat with `work3\run_chat2` using full sentences and `/temp 0.5`. Then gather more of the owner's own messages (milestone 2) or export to GGUF (milestone 4). Update sections 4 and 5 after each run.
+
+## Newest state: web UI U1a (chat core), 2026-11-15
+Web UI plan and stage prompt: `docs/UI_PROMPT.md` (U0 and U1a done; next is U1b, chat controls). One stage per session.
+- Built: choose a checkpoint + tokenizer (or an identity core folder) from files inside the project, load it, send messages, bubbles, typing dots, live reply while it is written, Stop, Enter/Shift+Enter, token counter (used / window, draft count, warning when the oldest messages fall out of the window). Chat is now the start page.
+- Files added: `persona_lm/ui_chat.py` (ChatHub), `persona_lm/ui_static/chat.js`, `tests/test_ui_u1a.py`. Changed: `ui_server.py` (routes, `work3` added to PathGuard.ALLOWED_TOP), `fastgen.py` (optional `should_stop` / `on_token`, default off, same answers), `app.js`, `app.css`, `tests/test_ui_u0.py` (route table and stage name).
+- Endpoints: GET `/api/chat/sources|state|poll?job=`; POST `/api/chat/load|send|stop|count`. All need token + Host/Origin checks. A message goes through `AI.chat()` -> `say()`, never `handle()`: "/approve 1" is only text. No route approves, edits identity or writes memory.
+- Defaults: temperature 0.5 (HANDOFF section 7 advice), max_new 120, top_k 40. U1b adds the settings drawer. Loading again starts a new conversation. Reply is kept (marked "stopped") if you press Stop mid-way.
+- Limits: not checked in a real browser (none available in the build session): run the browser check once on your PC (light, dark, narrow width, console). Memory, mood badge, archive recall are not wired into the chat page yet (U1b/U2/U3); checkpoint mode chats without them. Identity core mode loads the core's own memory/mood/Person card as the runtime does (the model's memory use is untested, see section 6).
+- Run: `python -m persona_lm ui --root C:\Users\user\persona_lm_project`, open the printed link, Chat page, pick `work3/run_chat2/ckpt.npz`, tokenizer `work/tok.json`.
+

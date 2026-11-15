@@ -1,5 +1,7 @@
-// PersonaLM UI (stage U0): shell, theme, toasts, shortcuts, Settings/Privacy page, design kit.
+// PersonaLM UI (stages U0, U1a): shell, theme, toasts, shortcuts, Settings/Privacy page, design kit.
 // Everything is built with textContent / createElement (no innerHTML with data), and nothing is loaded from outside this server.
+
+import { chatPage } from './chat.js';
 
 const TOKEN = document.querySelector('meta[name="plm-token"]').content;
 
@@ -158,11 +160,11 @@ function designPage(main) {
         h('div', { class: 'row' }, h('button', { class: 'btn', onclick: () => toast('Saved', 'ok') }, 'OK toast'), h('button', { class: 'btn', onclick: () => toast('Something failed', 'bad') }, 'Error toast'))))));
 }
 
-const PAGES = { settings: (main) => settingsPage(main), design: (main) => designPage(main) };
+const PAGES = { chat: (main) => chatPage(main), settings: (main) => settingsPage(main), design: (main) => designPage(main) };
 
 // ---------- router + nav
 function route() {
-  const id = (location.hash.replace(/^#\/?/, '') || 'settings').split('/')[0];
+  const id = (location.hash.replace(/^#\/?/, '') || (SECTIONS.some((s) => s.id === 'chat') ? 'chat' : 'settings')).split('/')[0];
   const sec = SECTIONS.find((s) => s.id === id);
   const main = document.getElementById('main');
   const title = id === 'design' ? 'Design kit' : sec ? sec.label : 'Not found';

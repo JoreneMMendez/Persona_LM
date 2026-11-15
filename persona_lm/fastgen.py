@@ -79,8 +79,11 @@ def step(params, cfg, new_ids, cache):
     return (nf @ params["tok"].T)[0]
 
 
-def sample_ids_cached(params, cfg, prompt_ids, max_new=100, temperature=0.8, top_k=40, top_p=0.95, seed=0, stop_ids=(EOS, END)):
-    """Same contract and same answers as generate.sample_ids, but with a KV cache. Returns only the newly generated ids."""
+def sample_ids_cached(params, cfg, prompt_ids, max_new=100, temperature=0.8, top_k=40, top_p=0.95, seed=0, stop_ids=(EOS, END),
+                      should_stop=None, on_token=None):
+    """Same contract and same answers as generate.sample_ids, but with a KV cache. Returns only the newly generated ids.
+    should_stop() (optional) is asked before every new token; True ends the reply early with what exists so far (the web UI's Stop button).
+    on_token(id) (optional) is told about each new token (the web UI shows the reply while it grows). Both default to off: nothing changes."""
     rng = np.random.Generator(np.random.PCG64(seed))
     ids = list(prompt_ids)
     if not ids:
@@ -88,6 +91,8 @@ def sample_ids_cached(params, cfg, prompt_ids, max_new=100, temperature=0.8, top
     out = []
     cache = KVCache(cfg, params["tok"].dtype)
     for _ in range(max_new):
+        if should_stop is not None and should_stop():
+            break
         if cache.n == 0 or cache.n + 1 > cfg.ctx:
             window = ids[-cfg.ctx:]                                         # first step, or the window slid: read the newest ctx tokens afresh
             cache.reset()
@@ -99,4 +104,6 @@ def sample_ids_cached(params, cfg, prompt_ids, max_new=100, temperature=0.8, top
             break
         ids.append(nxt)
         out.append(nxt)
+        if on_token is not None:
+            on_token(nxt)
     return out

@@ -1,4 +1,4 @@
-"""The local web UI server (stage U0). Python standard library only, offline, this computer only.
+"""The local web UI server (stages U0, U1a). Python standard library only, offline, this computer only.
 
     python -m persona_lm ui                 # opens http://127.0.0.1:8777/ in your browser
     python -m persona_lm ui --port 9000 --no-open --root C:\\path\\to\\project
@@ -16,6 +16,7 @@ What this file guarantees (each point has a test in tests/test_ui_u0.py):
     names exist; it never lists or reads chat data.
   * There is NO route that runs a command, approves a proposal, changes the identity or writes memory. Later stages add routes
     one at a time; the typed confirmations stay in the terminal unless a stage says otherwise and was approved by the owner.
+    U1a adds the chat routes (/api/chat/...; see ui_chat.py): a message is sent with say(), never handle(), so "/approve 1" is only text.
   * Nothing the owner types is logged by this server (the per-request log line is switched off).
 """
 import hmac
@@ -30,6 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 from . import __version__
+from .ui_chat import ChatHub, ChatProblem
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(HERE, "ui_static")
@@ -43,6 +45,7 @@ TOKEN_HEADER = "X-PLM-Token"
 STATIC = {
     "/static/app.css": ("app.css", "text/css; charset=utf-8"),
     "/static/app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "/static/chat.js": ("chat.js", "text/javascript; charset=utf-8"),
     "/static/favicon.svg": ("favicon.svg", "image/svg+xml"),
 }
 INDEX_FILE = "index.html"
@@ -65,7 +68,7 @@ class PathGuard:
     # Top-level names a later stage may read (U0 only checks that they exist). Chat data folders are here so the Data page can
     # count files; the private/ folder inside data_msgr is blocked below.
     ALLOWED_TOP = (
-        "memory.json", "mood.json", "person_card.md", "persona_settings.json", "project.json", "identity_core", "work", "work2",
+        "memory.json", "mood.json", "person_card.md", "persona_settings.json", "project.json", "identity_core", "work", "work2", "work3",
         "data_chat", "data_pre", "data_msgr", "data_msgr_chats", "data_msgr_archive", "exports", "docs", "HANDOFF.md", "README.md",
     )
 
@@ -116,6 +119,7 @@ STORAGE = [
     ("persona_settings.json", "Settings file", "your export path and the name you are called in chats", "medium"),
     ("work", "Training work folder", "tokenizer, checkpoints, logs (run folders)", "medium"),
     ("work2", "Second work folder (s30m)", "tokenizer copy, checkpoints, logs", "medium"),
+    ("work3", "Third work folder (s30m runs)", "checkpoints and logs of the s30m runs", "medium"),
     ("data_chat", "Prepared chat tokens", "your chats as numbers (token files)", "high"),
     ("data_pre", "Prepared public text tokens", "public web text as numbers (not private)", "low"),
     ("exports", "Export packages", "a copy of the AI to use elsewhere; may contain memory and identity", "high"),
@@ -130,7 +134,7 @@ NEVER_LEAVES = [
 ]
 
 SECTIONS = [
-    {"id": "chat", "label": "Chat", "stage": "U1", "icon": "chat"},
+    {"id": "chat", "label": "Chat", "stage": "U1", "icon": "chat", "ready": True},
     {"id": "memory", "label": "Memory", "stage": "U2", "icon": "graph"},
     {"id": "mood", "label": "Mood and Person", "stage": "U2", "icon": "heart"},
     {"id": "prompt", "label": "Prompt and personas", "stage": "U3", "icon": "layers"},
@@ -155,6 +159,7 @@ class UIState:
         self.port = port
         self.token = token or secrets.token_urlsafe(32)
         self.started = time.time()
+        self.chat = ChatHub(self.guard)
 
     def allowed_hosts(self):
         return ("127.0.0.1:%d" % self.port, "localhost:%d" % self.port)
@@ -164,7 +169,7 @@ class UIState:
 
     def info(self):
         return {"name": "PersonaLM", "version": __version__, "project": os.path.basename(self.guard.root) or self.guard.root,
-                "sections": SECTIONS, "stage": "U0", "uptime_s": int(time.time() - self.started)}
+                "sections": SECTIONS, "stage": "U1a", "uptime_s": int(time.time() - self.started)}
 
     def privacy(self):
         items = []
@@ -290,10 +295,22 @@ def make_handler(state):
                     return self._json(200, {"ok": True, **state.info()})
                 if path == "/api/privacy":
                     return self._json(200, {"ok": True, **state.privacy()})
+                if path in ("/api/chat/sources", "/api/chat/state", "/api/chat/poll"):
+                    return self._chat_get(path, url)
                 return self._error(404, "no such route")
             if not self._gate(False):
                 return
             self._error(404, "not found")
+
+        def _chat_get(self, path, url):
+            try:
+                if path == "/api/chat/sources":
+                    return self._json(200, {"ok": True, **state.chat.sources()})
+                if path == "/api/chat/state":
+                    return self._json(200, {"ok": True, **state.chat.state()})
+                return self._json(200, {"ok": True, **state.chat.poll(parse_qs(url.query).get("job", [""])[0])})
+            except ChatProblem as e:
+                return self._error(e.code, str(e))
 
         def _index(self, url):
             if not self._gate(False):
@@ -334,8 +351,16 @@ def make_handler(state):
                 return self._error(400, "body is not valid JSON")
             if not isinstance(body, dict):
                 return self._error(400, "body must be a JSON object")
-            if path == "/api/ping":                         # the only POST in U0: lets the page check that its token still works
+            if path == "/api/ping":                         # lets the page check that its token still works
                 return self._json(200, {"ok": True})
+            if path in CHAT_POST:
+                try:
+                    h = state.chat
+                    out = (h.load(body) if path == "/api/chat/load" else h.send(body.get("message")) if path == "/api/chat/send" else
+                           h.stop() if path == "/api/chat/stop" else h.count(body.get("text")))
+                    return self._json(200, {"ok": True, **out})
+                except ChatProblem as e:
+                    return self._error(e.code, str(e))
             return self._error(404, "no such route")
 
         def do_PUT(self):
@@ -346,7 +371,9 @@ def make_handler(state):
     return Handler
 
 
-ROUTES = {"GET": ["/", "/api/health", "/api/info", "/api/privacy"] + sorted(STATIC), "POST": ["/api/ping"]}
+CHAT_GET = ["/api/chat/poll", "/api/chat/sources", "/api/chat/state"]
+CHAT_POST = ["/api/chat/count", "/api/chat/load", "/api/chat/send", "/api/chat/stop"]
+ROUTES = {"GET": ["/", "/api/health", "/api/info", "/api/privacy"] + CHAT_GET + sorted(STATIC), "POST": ["/api/ping"] + CHAT_POST}
 
 
 def make_server(root=".", host="127.0.0.1", port=DEFAULT_PORT, token=None):

@@ -188,7 +188,7 @@ class ApiAuth(Base):
         st, _, body = self.api("GET", "/api/health")
         self.assertEqual((st, json.loads(body)), (200, {"ok": True}))
         info = json.loads(self.api("GET", "/api/info")[2])
-        self.assertEqual(info["stage"], "U0")
+        self.assertEqual(info["stage"], "U1a")
         ids = [s["id"] for s in info["sections"]]
         for need in ("chat", "memory", "mood", "prompt", "data", "training", "identity", "proposals", "models", "export", "settings"):
             self.assertIn(need, ids)
@@ -303,14 +303,16 @@ class Guard(Base):
 
 
 class SafetyDesign(Base):
-    """U0 has no model, but the rule must already hold: no route can run a command, approve, change identity or write memory."""
+    """No route can run a command, approve, change identity or write memory. U1a adds ONLY the four chat POST routes and three chat GET routes
+    below (see tests/test_ui_u1a.py); every other route must still have a harmless name."""
+    CHAT = {"/api/chat/count", "/api/chat/load", "/api/chat/send", "/api/chat/stop", "/api/chat/poll", "/api/chat/sources", "/api/chat/state"}
     FORBIDDEN = re.compile(r"approve|reject|apply|identity|memory|exec|run|shell|command|promote|rollback|forget|chat|file|delete|write", re.I)
 
     def test_route_table_has_no_dangerous_names(self):
-        self.assertEqual(UI.ROUTES["POST"], ["/api/ping"])
+        self.assertEqual(UI.ROUTES["POST"], ["/api/ping", "/api/chat/count", "/api/chat/load", "/api/chat/send", "/api/chat/stop"])
         for method, paths in UI.ROUTES.items():
             for p in paths:
-                if p.startswith("/api/"):
+                if p.startswith("/api/") and p not in self.CHAT:
                     self.assertIsNone(self.FORBIDDEN.search(p), p)
 
     def test_dangerous_routes_do_not_exist_even_with_the_token(self):
@@ -335,7 +337,7 @@ class SafetyDesign(Base):
 
 
 class OfflineAssets(unittest.TestCase):
-    FILES = ("index.html", "app.css", "app.js", "favicon.svg")
+    FILES = ("index.html", "app.css", "app.js", "chat.js", "favicon.svg")
 
     def read(self, name):
         with open(os.path.join(STATIC_DIR, name), encoding="utf-8") as f:
@@ -356,8 +358,9 @@ class OfflineAssets(unittest.TestCase):
         self.assertIn("__TOKEN__", html)
 
     def test_no_unsafe_dom_sinks(self):
-        js = self.read("app.js")
-        self.assertNotRegex(js, r"\.innerHTML\s*=|insertAdjacentHTML|document\.write|\beval\(|new Function")
+        for name in ("app.js", "chat.js"):
+            js = self.read(name)
+            self.assertNotRegex(js, r"\.innerHTML\s*=|insertAdjacentHTML|document\.write|\beval\(|new Function", name)
 
     def test_js_syntax_when_node_exists(self):
         node = shutil.which("node")
@@ -365,10 +368,11 @@ class OfflineAssets(unittest.TestCase):
             self.skipTest("Node.js is not installed")
         tmp = tempfile.mkdtemp()
         try:
-            p = os.path.join(tmp, "app.mjs")
-            shutil.copy(os.path.join(STATIC_DIR, "app.js"), p)
-            r = subprocess.run([node, "--check", p], capture_output=True, text=True)
-            self.assertEqual(r.returncode, 0, r.stderr)
+            for name in ("app.js", "chat.js"):
+                p = os.path.join(tmp, name.replace(".js", ".mjs"))
+                shutil.copy(os.path.join(STATIC_DIR, name), p)
+                r = subprocess.run([node, "--check", p], capture_output=True, text=True)
+                self.assertEqual(r.returncode, 0, name + ": " + r.stderr)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
