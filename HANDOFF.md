@@ -9,6 +9,7 @@ Rebuilt on 2026-11-15 because the previous copy had been overwritten by notes fr
 - Run tests: `python -m unittest discover -s tests -v`. Read README.md for the commands.
 - Rules for any AI working here: never print or upload private chat data (`data_msgr*`, `data_chat*`, `*.jsonl`, `*.bin`, `private/`); never overwrite `work\tok.json` (frozen tokenizer); never delete files, move them to `_to_delete\` and tell the owner.
 - Delivery rule for changes (owner's standing request): when you change the project, give only the changed files (as a zip) to use less credit, and end every reply with the PowerShell command that applies them.
+- ADDING MORE CHATS: always use `clean_data.py` (see "How to add more chats" at the end of this file). Never feed raw chat files to `prepare` and never merge files by hand.
 - Before the AI's tokens run out, update this file (owner's standing request).
 
 ## 1. Layout
@@ -184,3 +185,27 @@ Next stage: U6a (Identity page). `docs/UI_PROMPT.md` has the plan.
 - Tests: 773 (2 skipped without PyTorch).
 - Run: `python -m persona_lm ui --root C:\\Users\\user\\persona_lm_project`, open Training, press Start on the NEXT step.
 
+
+## Newest state: clean_data.py (one *_cleanData file per input), 2026-11-15
+- Built: root script `clean_data.py`. `python clean_data.py --input merged_chats_clean_mood.jsonl synthetic_chats_100k.jsonl` cleans each .json/.jsonl (or every file in a folder) SEPARATELY and writes `data_clean\train\<name>_cleanData.jsonl` plus `data_clean\val\<name>_cleanData.jsonl` (last 5 % of each chat's sessions) and `data_clean\report.json` (counts only). Nothing is merged. Files already named *cleanData* are skipped.
+- Cleaning = the clean_chat.py rules (imported from it) plus: bad lines/records/empty messages dropped, exact duplicate examples dropped. Repeated-reply limits (--max-dup 3, --max-dup-long 5) are counted over ALL files together, so list the owner's real chats FIRST.
+- All files are used for training: `prepare --kind chat --tokenizer work\tok.json --data data_clean\train --val-data data_clean\val --out data_chat` reads whole folders.
+- Measured on the owner's two files: merged_chats_clean_mood 1016 -> 973 train + 43 val; synthetic_chats_100k 100000 -> 34757 train + 4854 val (57,047 short and 3,342 long repeated replies dropped: the synthetic file is extremely repetitive). The synthetic file is about 35x bigger than the real one, so it dominates both training and validation; `--max-examples N` caps each file.
+- Chat text is not printed unless `--show-top` is given. Tests: tests/test_clean_data.py.
+
+## How to add more chats (owner's standing request, 2026-11-15)
+When the owner has new chat files (.jsonl in the chat/session/messages format, or .json lists), do this. Do not merge anything; each file stays its own file.
+1. Put the new .jsonl file(s) in the project folder `C:\Users\user\persona_lm_project`.
+2. Clean ALL the files again in one run, the owner's real chats FIRST, then synthetic/other data:
+   `python clean_data.py --input <real chats>.jsonl <new chats>.jsonl <synthetic>.jsonl --max-examples 5000`
+   Each input becomes `data_clean\train\<name>_cleanData.jsonl` (and `data_clean\val\<name>_cleanData.jsonl`). The script deletes the old *_cleanData files first, so always list every file you want used, not just the new one. Already-cleaned files (name contains "cleanData") are skipped if you point it at a folder.
+   `--max-examples N` caps each file so a huge synthetic file cannot drown out the owner's real chats (it is a cap per file; the real chat file is usually below it). Lower N (e.g. 1500) if replies sound generic.
+3. Make the tokens (uses every file in both folders, tokenizer stays `work\tok.json`, never regenerate it):
+   `python -m persona_lm prepare --kind chat --tokenizer work\tok.json --data data_clean\train --val-data data_clean\val --out data_chat`
+4. Fine-tune from the pretrained base into a NEW run folder, about 3 passes only (steps = 3 x train tokens / 16,384 at `--batch 1 --accum 4`, ctx 4096):
+   `python -m persona_lm train --run work3\run_chatN --data-dir data_chat --size s30m --init-from work3\run_pre\ckpt.npz --steps <steps> --lr 0.0001 --min-lr 0.00001 --warmup 8 --eval-every 15 --batch 1 --accum 4`
+   Stop (Ctrl+C) if validation loss starts rising; the trainer keeps only the latest checkpoint and the one before it.
+5. Chat text is private: never print or upload data_clean, data_chat or the input files. `clean_data.py --show-top` prints reply text; leave it off.
+- State on 2026-11-15: `merged_chats_clean_mood.jsonl` (1,016 examples) + `synthetic_chats_100k.jsonl` (100,000 examples, very repetitive) cleaned with `--max-examples 5000` -> train 973 + 3,638, val 43 + 257 -> `prepare` gave 574,600 train tokens and 37,190 val tokens (about 35 steps per pass, so about 105 steps for 3 passes). First fine-tune from this data: `work3\run_chat3` (result not yet checked).
+- Why fine-tuning alone cannot teach it to talk: pre-training teaches the language, fine-tuning only style. The base `work3\run_pre` limits how well it can answer; check its tokens per parameter on the Data page (about 20 per parameter is the usual target, 4 passes over the same text is about the useful limit).
+- Old checkpoints listed in the chat dropdown can be moved to `_to_delete\runs` (keep work3\run_pre, work3\run_chat2, work3\run_chat3; never move work\tok.json).
