@@ -84,18 +84,40 @@ def spread(left, right, w):
     return left + " " * max(1, gap) + right
 
 
-class TrainDisplay:
-    def __init__(self, title, stream=None, color=True, width=None, clock=time.time, unicode_ok=None):
-        self.out = stream or sys.stdout
+class Skin:
+    """Colours, glyphs and the rounded box shared by the training dashboard and the menu (falls back to ASCII on consoles without box characters)."""
+
+    def __init__(self, stream, color=True, unicode_ok=None):
+        self.out = stream
         self.color = color
+        u = self.unicode = _can_encode(self.out, "█░▁↓↑·─╭╮╰╯│…▸") if unicode_ok is None else unicode_ok
+        self.full, self.empty, self.arrow_dn, self.arrow_up, self.dot, self.rule, self.ell, self.ptr = ("█", "░", "↓", "↑", "·", "─", "…", "▸") if u else ("#", "-", "v", "^", "-", "-", "~", ">")
+        self.tl, self.tr, self.bl, self.br, self.hz, self.vt = ("╭", "╮", "╰", "╯", "─", "│") if u else ("+", "+", "+", "+", "-", "|")
+
+    def c(self, text, code):
+        return "\x1b[%sm%s\x1b[0m" % (code, text) if self.color else text
+
+    def box(self, title, lines, w, h):
+        """A rounded box w columns wide and h lines tall with the title in its top border; `lines` fill the inside (cut or padded to fit)."""
+        b = lambda t: self.c(t, "90")
+        head = " %s " % title
+        top = b(self.tl + self.hz) + self.c(head, "1;36") + b(self.hz * max(0, w - 2 - 1 - len(head)) + self.tr)
+        out = [top]
+        inner = w - 4
+        for i in range(h - 2):
+            out.append(b(self.vt) + " " + fit(lines[i] if i < len(lines) else "", inner, self.ell) + " " + b(self.vt))
+        out.append(b(self.bl + self.hz * (w - 2) + self.br))
+        return out
+
+
+class TrainDisplay(Skin):
+    def __init__(self, title, stream=None, color=True, width=None, clock=time.time, unicode_ok=None):
+        Skin.__init__(self, stream or sys.stdout, color, unicode_ok)
         self.width = width or shutil.get_terminal_size((100, 24)).columns
         self.clock = clock
         self.t0 = clock()
-        u = _can_encode(self.out, "█░▁↓↑·─╭╮╰╯│…") if unicode_ok is None else unicode_ok
-        self.full, self.empty, self.arrow_dn, self.arrow_up, self.dot, self.rule, self.ell = ("█", "░", "↓", "↑", "·", "─", "…") if u else ("#", "-", "v", "^", "-", "-", "~")
-        self.tl, self.tr, self.bl, self.br, self.hz, self.vt = ("╭", "╮", "╰", "╯", "─", "│") if u else ("+", "+", "+", "+", "-", "|")
-        self.spark = "▁▂▃▄▅▆▇█" if u else "_.-=+*#@"
-        self.blocks = " ▁▂▃▄▅▆▇█" if u else " .:-=+*#@"      # 0..8 eighths of a chart cell
+        self.spark = "▁▂▃▄▅▆▇█" if self.unicode else "_.-=+*#@"
+        self.blocks = " ▁▂▃▄▅▆▇█" if self.unicode else " .:-=+*#@"      # 0..8 eighths of a chart cell
         self.n = 0                      # lines of the live panel on screen
         self.step = self.total = 0
         self.steps, self.losses, self.vals = [], [], []
@@ -107,9 +129,6 @@ class TrainDisplay:
         self._write("\n" + self.c(" %s " % title, "1;36") + "\n" + self.c(self.rule * min(self.width - 1, MAX_W - 1), "90") + "\n")
 
     # ---------------------------------------------------------------- helpers
-    def c(self, text, code):
-        return "\x1b[%sm%s\x1b[0m" % (code, text) if self.color else text
-
     def _write(self, text):
         self.out.write(text)
         self.out.flush()
@@ -132,18 +151,6 @@ class TrainDisplay:
         span = (hi - lo) or 1.0
         top = len(self.spark) - 1
         return "".join(self.spark[int(round((x - lo) / span * top))] for x in v)
-
-    def box(self, title, lines, w, h):
-        """A rounded box w columns wide and h lines tall with the title in its top border; `lines` fill the inside (cut or padded to fit)."""
-        b = lambda t: self.c(t, "90")
-        head = " %s " % title
-        top = b(self.tl + self.hz) + self.c(head, "1;36") + b(self.hz * max(0, w - 2 - 1 - len(head)) + self.tr)
-        out = [top]
-        inner = w - 4
-        for i in range(h - 2):
-            out.append(b(self.vt) + " " + fit(lines[i] if i < len(lines) else "", inner, self.ell) + " " + b(self.vt))
-        out.append(b(self.bl + self.hz * (w - 2) + self.br))
-        return out
 
     def chart(self, values, width, rows):
         """A filled bar chart of the loss history, `rows` lines tall and `width` columns wide: (lines top first, low, high).

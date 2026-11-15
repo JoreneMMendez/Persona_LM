@@ -6,6 +6,10 @@ The model, tokenizer and training code are written from scratch with NumPy (Pyth
 Headless: command line only. Everything is written here: tokenizer, transformer with hand-written backprop, AdamW,
 training loop with exact resume, chat tuning, sampling, and a GGUF exporter so the finished model can run on the phone.
 
+## Menu
+Run `python -m persona_lm` with no arguments for a launcher menu (arrow keys or number keys): train or resume, chat, generate, status, Web UI, benchmark, GPU check.
+It finds your runs, token folders and tokenizer, fills in the answers, shows the exact command and runs it. Everything it does is also a normal command below.
+
 ## Workflow
 
 ```bash

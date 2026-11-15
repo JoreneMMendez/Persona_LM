@@ -912,6 +912,11 @@ def _add_backend_args(s):
                    help="(PyTorch) auto = bf16 on Ampere+ GPUs, fp16 on older GPUs, fp32 on CPU")
 
 
+def cmd_menu(a):
+    from .menu import run_menu
+    run_menu(a.root)
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="persona_lm", description="Train a small language model from scratch (pure Python + NumPy).")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -1255,6 +1260,10 @@ def build_parser():
     s.add_argument("--no-open", dest="no_open", action="store_true", help="do not open the browser; just print the link")
     s.set_defaults(fn=cmd_ui)
 
+    s = sub.add_parser("menu", help="the launcher menu (also what runs when you type just `python -m persona_lm`)")
+    s.add_argument("--root", default=".", help="the project folder to look in for runs, token folders and tokenizers (default: here)")
+    s.set_defaults(fn=cmd_menu)
+
     s = sub.add_parser("check-gpu", help="check the PyTorch/GPU backend against the NumPy reference and print a report")
     s.add_argument("--device", default="auto")
     s.set_defaults(fn=cmd_check_gpu)
@@ -1267,5 +1276,6 @@ def main(argv=None):
             stream.reconfigure(errors="replace")
         except (AttributeError, ValueError):
             pass
-    a = build_parser().parse_args(argv)
+    args = sys.argv[1:] if argv is None else list(argv)
+    a = build_parser().parse_args(args or ["menu"])                # no arguments: the launcher menu
     a.fn(a)
