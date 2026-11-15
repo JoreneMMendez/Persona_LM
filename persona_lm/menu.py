@@ -93,8 +93,9 @@ def _find_run(found, answer):
 
 
 # ------------------------------------------------------------------ the items and what each one asks
-def _field(key, ask, flag=None, default=None, required=False, choices=None, hint=None):
-    return dict(key=key, ask=ask, flag=flag, default=default or (lambda a, f: ""), required=required, choices=choices, hint=hint)
+def _field(key, ask, flag=None, default=None, required=False, choices=None, hint=None, check=None, switch=False):
+    """check(value) -> an error text or None (checked before the answer is accepted); switch=True: the flag takes no value (answer yes -> flag added)."""
+    return dict(key=key, ask=ask, flag=flag, default=default or (lambda a, f: ""), required=required, choices=choices, hint=hint, check=check, switch=switch)
 
 
 def _d_run(a, f):
@@ -118,7 +119,24 @@ def _d_size(a, f):
     return r["size"] if r and r["size"] not in (None, "?") else "s10m"
 
 
-HELP = {"run": "where this run's checkpoints are saved (an existing folder = resume it)",
+def _langs_default(a, f):
+    return "en,tl,ceb,taglish"
+
+
+def _check_langs(val):
+    """Error text if the typed language list is not a comma list of en / tl / ceb / taglish, else None."""
+    from .corpus import CorpusError, check_langs
+    try:
+        check_langs([x.strip().lower() for x in val.split(",") if x.strip()])
+    except CorpusError as e:
+        return str(e)
+    return None
+
+
+HELP = {"lang": "which public text to get, comma separated: en (English), tl (Tagalog), ceb (Cebuano), taglish. Enter = all four",
+        "mode": "all = download, then clean and check; clean = only clean what is already in public_text\\",
+        "mix": "yes = also rebuild public_mix\\ (the pretraining mix) from the cleaned text",
+        "run": "where this run's checkpoints are saved (an existing folder = resume it)",
         "data": "the folder of token files made by `prepare`",
         "size": "model size; must match the run you are continuing",
         "init": "only for a NEW run: copy the weights of another model (e.g. runs\\pre\\ckpt.npz) - this is how chat fine-tuning starts. Leave empty to continue or start fresh",
@@ -294,6 +312,10 @@ ITEMS = [
     dict(label="Speed benchmark", cmd="benchmark", desc="Measure tokens per second on this computer and estimate training time.",
          fields=[_field("size", "Model size", "--size", _d_size, True, SIZES)]),
     dict(label="Check the GPU", cmd="check-gpu", desc="Check the PyTorch / GPU backend against the reference and print a report.", fields=[]),
+    dict(label="Language data (download)", cmd="corpus", desc="Download public English, Tagalog, Cebuano and Taglish text, clean it and check it.",
+         fields=[_field("lang", "Languages", "--lang", _langs_default, True, check=_check_langs),
+                 _field("mode", "What to do", "--mode", lambda a, f: "all", True, ("all", "clean")),
+                 _field("mix", "Also rebuild the training mix", "--mix", lambda a, f: "no", False, ("no", "yes"), switch=True)]),
     dict(label="Quit", cmd=None, desc="Leave the menu.", fields=[]),
 ]
 QUIT = len(ITEMS) - 1
@@ -366,7 +388,7 @@ class Menu(Skin):
                 rows.append(self.c(fit("%s %s  %s" % (self.ptr, key, it["label"]), li), "30;46"))
             else:
                 rows.append("  " + self.c(key, "90") + "  " + it["label"])
-        big = rows + ["", self.c("up/down move  Enter select  q quit" if not self.unicode else "↑↓ move   Enter select   q quit", "90")]
+        big = rows + ([""] if len(rows) + 2 <= PANEL_H - 2 else []) + [self.c("up/down move  Enter select  q quit" if not self.unicode else "↑↓ move   Enter select   q quit", "90")]
 
         it = ITEMS[sel]
         words = textwrap.wrap(it["desc"], ri)[:3]
@@ -440,12 +462,20 @@ def collect(item, found, ask=input, say=print):
                 if f["choices"] and val and val not in f["choices"]:
                     say("       choose one of: %s" % ", ".join(f["choices"]))
                     continue
+                if f.get("check") and val:
+                    problem = f["check"](val)
+                    if problem:
+                        say("       %s" % problem)
+                        continue
                 break
             if not val and f["required"]:
                 say("  %s is needed, so nothing was started." % f["ask"])
                 return None
             answers[f["key"]] = val
-            if val:
+            if f.get("switch"):
+                if val == "yes":
+                    argv.append(f["flag"])
+            elif val:
                 argv += [f["flag"], val] if f["flag"] else [val]
         if item.get("settings"):
             base, ctx, step = settings_base(found, answers)
@@ -469,6 +499,35 @@ def confirm_train(argv, found, ask=input, say=print):
     say("\n  This will %s." % what)
     say("  If this run is already training in another window, do not start it a second time.")
     try:
+        return ask("  Start now? [Y/n] > ").strip().lower() not in ("n", "no")
+    except (KeyboardInterrupt, EOFError):
+        return False
+
+
+def confirm_corpus(argv, ask=input, say=print):
+    """Downloading is slow and uses the internet, so say plainly what will be fetched and ask first. Taglish needs a typed yes (licence)."""
+    from .corpus import LANGS, check_langs
+    langs = check_langs([x.strip().lower() for x in argv[argv.index("--lang") + 1].split(",")]) if "--lang" in argv else list(LANGS)
+    mode = argv[argv.index("--mode") + 1] if "--mode" in argv else "all"
+    say("")
+    if mode == "all":
+        say("  This will DOWNLOAD public text from the internet (nothing of yours is uploaded), then clean and check it:")
+        if importlib.util.find_spec("datasets") is None:
+            say("  The `datasets` package is not installed, so nothing was started. Run:  pip install datasets")
+            return False
+    else:
+        say("  This will only CLEAN and check text already in public_text\\ (no download):")
+    for l in langs:
+        d = LANGS[l]
+        say("    - %-8s %s  (%s, licence: %s)" % (d["label"], d["source"], "all of it" if not d["default_mb"] else "about %d MB" % d["default_mb"], d["license"]))
+    if "--mix" in argv:
+        say("    - then rebuild public_mix\\ for these languages")
+    try:
+        if "taglish" in langs:
+            say("")
+            say("  Taglish = real forum users' posts. Private training only: do not re-upload the data or publish a model trained on it without checking the site's terms.")
+            if ask("  Type yes to accept that > ").strip().lower() != "yes":
+                return False
         return ask("  Start now? [Y/n] > ").strip().lower() not in ("n", "no")
     except (KeyboardInterrupt, EOFError):
         return False
@@ -518,6 +577,9 @@ def run_menu(root=".", stream=None, read=read_key, ask=input, call=None, width=N
             return 0
         argv = collect(ITEMS[sel], found, ask)
         if argv is not None and argv[0] == "train" and not confirm_train(argv, found, ask):
+            print("  not started.")
+            argv = None
+        if argv is not None and argv[0] == "corpus" and not confirm_corpus(argv, ask):
             print("  not started.")
             argv = None
         if argv is not None:

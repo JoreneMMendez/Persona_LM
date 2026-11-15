@@ -7,7 +7,7 @@ Headless: command line only. Everything is written here: tokenizer, transformer 
 training loop with exact resume, chat tuning, sampling, and a GGUF exporter so the finished model can run on the phone.
 
 ## Menu
-Run `python -m persona_lm` with no arguments for a launcher menu (arrow keys or number keys): train or resume, chat, generate, status, Web UI, benchmark, GPU check.
+Run `python -m persona_lm` with no arguments for a launcher menu (arrow keys or number keys): train or resume, chat, generate, status, Web UI, benchmark, GPU check, language data (download English, Tagalog, Cebuano, Taglish public text).
 It finds your runs, token folders and tokenizer, fills in the answers, shows the exact command and runs it. Everything it does is also a normal command below.
 
 ## Workflow
@@ -136,6 +136,7 @@ fine-tuned on memory blocks, so how well it uses them is untested.
     python -m persona_lm corpus                                  # English, Tagalog, Cebuano, Taglish: download, clean, check (needs: pip install datasets)
     python -m persona_lm corpus --lang tl,taglish --mb tl=150    # only some, with a size cap in MB
     python -m persona_lm corpus --mode clean --mix               # no download: clean what is in public_text/ and rebuild public_mix/
+    python -m persona_lm corpus --plain                          # plain log lines instead of the live progress screen
 
 The same thing is in the Web UI under **Language data**. Output: `public_clean/<lang>/` (and `public_mix/` with --mix), ready for `prepare --kind pretrain`.
 

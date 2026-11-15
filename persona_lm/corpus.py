@@ -116,7 +116,15 @@ def _mb(path):
         return 0.0
 
 
+STAGE_HOOK = None          # set by corpus_ui (the terminal progress screen): called as hook(index, total, title, lang) when a step starts
+
+
 def _write_progress(path, index, total, title, lang=None):
+    if STAGE_HOOK is not None:
+        try:
+            STAGE_HOOK(index, total, title, lang)
+        except Exception:                          # a display problem must never stop a download
+            pass
     if not path:
         return
     rec = {"index": index, "total": total, "title": title, "lang": lang, "at": time.time()}
@@ -403,12 +411,18 @@ def add_arguments(p):
     p.add_argument("--mode", choices=MODES, default="all", help="all = download then clean (default); clean = only clean what is already in public_text/")
     p.add_argument("--mb", nargs="*", default=[], metavar="LANG=MB", help="size caps, e.g. en=200 tl=150 taglish=0 (0 = all). Cebuano always downloads all.")
     p.add_argument("--mix", action="store_true", help="also rebuild public_mix/ for the chosen languages (what `make_mix.py` does)")
+    p.add_argument("--plain", action="store_true", help="plain log lines instead of the live progress screen (the screen only appears on a real terminal anyway)")
     p.add_argument("--stopfile", default=None, help=argparse.SUPPRESS)       # used by the web UI: the file whose existence means 'stop'
     p.add_argument("--progress", default=None, help=argparse.SUPPRESS)       # used by the web UI: where to write the step number
 
 
 def cmd(a):
     try:
+        if not a.plain and not a.stopfile and not a.progress:           # the web UI passes stopfile/progress: it always gets plain lines
+            from . import corpus_ui
+            if corpus_ui.wanted():
+                corpus_ui.run_with_display([x.strip() for x in a.lang.split(",") if x.strip()], mode=a.mode, mb=parse_mb(a.mb), mix=a.mix)
+                return
         run([x.strip() for x in a.lang.split(",") if x.strip()], mode=a.mode, mb=parse_mb(a.mb), mix=a.mix, stopfile=a.stopfile, progress=a.progress)
     except CorpusError as e:
         raise SystemExit("error: %s" % e)

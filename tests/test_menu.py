@@ -228,6 +228,63 @@ class Loop(unittest.TestCase):
             self.assertEqual(calls, [["check-gpu"]])
 
 
+class LanguageData(unittest.TestCase):
+    def item(self):
+        return [it for it in M.ITEMS if it["cmd"] == "corpus"][0]
+
+    def test_item_is_in_the_menu_before_quit(self):
+        self.assertLess(M.ITEMS.index(self.item()), M.QUIT)
+        self.assertIsNone(M.ITEMS[M.QUIT]["cmd"])
+
+    def test_defaults_give_all_four_languages_and_no_mix(self):
+        argv = M.collect(self.item(), {"runs": [], "data": [], "toks": [], "torch": False}, ask=lambda q: "", say=lambda *_: None)
+        self.assertEqual(argv, ["corpus", "--lang", "en,tl,ceb,taglish", "--mode", "all"])
+
+    def test_choices_and_mix_switch(self):
+        answers = iter(["tl,ceb", "clean", "yes"])
+        argv = M.collect(self.item(), {}, ask=lambda q: next(answers), say=lambda *_: None)
+        self.assertEqual(argv, ["corpus", "--lang", "tl,ceb", "--mode", "clean", "--mix"])
+
+    def test_bad_language_is_asked_again(self):
+        said, answers = [], iter(["french", "en", "", ""])
+        argv = M.collect(self.item(), {}, ask=lambda q: next(answers), say=said.append)
+        self.assertEqual(argv[:3], ["corpus", "--lang", "en"])
+        self.assertTrue(any("choose at least one of" in x for x in said))
+
+    def test_taglish_needs_a_typed_yes(self):
+        said = []
+        self.assertFalse(M.confirm_corpus(["corpus", "--lang", "taglish", "--mode", "clean"], ask=lambda q: "y", say=said.append))
+        self.assertTrue(M.confirm_corpus(["corpus", "--lang", "taglish", "--mode", "clean"], ask=lambda q, it=iter(["yes", ""]): next(it), say=said.append))
+        self.assertTrue(any("Private training only" in x for x in said))
+
+    def test_no_taglish_just_asks_start(self):
+        self.assertFalse(M.confirm_corpus(["corpus", "--lang", "ceb", "--mode", "clean"], ask=lambda q: "n", say=lambda *_: None))
+        self.assertTrue(M.confirm_corpus(["corpus", "--lang", "ceb", "--mode", "clean"], ask=lambda q: "", say=lambda *_: None))
+
+    def test_download_refused_when_datasets_missing(self):
+        said = []
+        orig = M.importlib.util.find_spec
+        M.importlib.util.find_spec = lambda name, *a: None if name == "datasets" else orig(name, *a)
+        try:
+            self.assertFalse(M.confirm_corpus(["corpus", "--lang", "en", "--mode", "all"], ask=lambda q: "", say=said.append))
+        finally:
+            M.importlib.util.find_spec = orig
+        self.assertTrue(any("pip install datasets" in x for x in said))
+
+    def test_menu_runs_it_through_the_loop(self):
+        with tempfile.TemporaryDirectory() as d:
+            calls = []
+            idx = str(M.ITEMS.index(self.item()) + 1)
+            answers = iter([idx, "ceb", "clean", "", "", "", "q"])      # pick, 3 questions, Start now?, press Enter, quit
+            M.run_menu(d, stream=io.StringIO(), ask=lambda q: next(answers), call=calls.append, interactive=False)
+            self.assertEqual(calls, [["corpus", "--lang", "ceb", "--mode", "clean"]])
+
+    def test_corpus_command_accepts_what_the_menu_builds(self):
+        from persona_lm import cli
+        a = cli.build_parser().parse_args(["corpus", "--lang", "tl,ceb", "--mode", "clean", "--mix"])
+        self.assertTrue(a.mix)
+
+
 class Cli(unittest.TestCase):
     def test_menu_subcommand_exists_and_no_arguments_means_menu(self):
         from persona_lm import cli
