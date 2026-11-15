@@ -60,3 +60,5 @@ saved_chats/
 chat_archive.jsonl
 
 data_clean/
+
+pex_raw/
