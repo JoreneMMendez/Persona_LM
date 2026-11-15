@@ -67,7 +67,7 @@ class Routes(TrainBase):
         for p in UT.__doc__ and UI.TRAIN_GET:
             self.assertIn(p, UI.ROUTES["GET"])
             self.assertNotIn(p, UI.ROUTES["POST"])
-        self.assertEqual([p for p in UI.ROUTES["POST"] if "/train" in p], [])
+        self.assertEqual([p for p in UI.ROUTES["POST"] if "/train" in p], ["/api/train/start", "/api/train/stop"])     # U5b: see test_ui_u5b.py
         self.assertIn("/static/training.js", UI.ROUTES["GET"])
 
     def test_need_token_and_host(self):
@@ -79,12 +79,12 @@ class Routes(TrainBase):
             self.assertEqual(self.api("GET", p)[0], 200, p)
 
     def test_post_is_refused(self):
-        for p in ("/api/train/plan", "/api/train/start", "/api/train/stop"):
+        for p in ("/api/train/plan", "/api/train/checkpoints", "/api/train/history", "/api/train/log"):          # the read-only routes take no POST
             self.assertEqual(self.api("POST", p, {"cmd": "train"})[0], 404, p)
 
     def test_stage_and_section(self):
         st, info = self.get("/api/info")
-        self.assertEqual(info["stage"], "U5a")
+        self.assertEqual(info["stage"], "U5b")
         self.assertTrue([s for s in info["sections"] if s["id"] == "training"][0]["ready"])
 
     def test_module_never_writes_or_starts_programs(self):
@@ -248,9 +248,10 @@ class Static(unittest.TestCase):
         self.assertIn("from './training.js'", app)
         self.assertIn("training: (main) => trainingPage(main)", app)
         js = open(os.path.join(d, "training.js"), encoding="utf-8").read()
-        self.assertNotRegex(js, r"innerHTML|insertAdjacentHTML|eval\(|https?://")
+        js_no_ns = js.replace("http://www.w3.org/2000/svg", "")                   # U5b: the SVG namespace name (an identifier, never fetched) for the loss chart
+        self.assertNotRegex(js_no_ns, r"innerHTML|insertAdjacentHTML|eval\(|https?://")
         self.assertNotIn(": null);", js)                                       # a statement ending like this was an append(null), which prints the word null
-        self.assertNotRegex(js, r"method:\s*['\"]POST")                     # U5a never posts
+        self.assertNotRegex(js, r"method:\s*['\"]POST")                     # the page never sets its own method: posts go through api(path, body)
 
 
 if __name__ == "__main__":

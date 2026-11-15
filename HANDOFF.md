@@ -54,6 +54,7 @@ Rebuilt on 2026-11-15 because the previous copy had been overwritten by notes fr
 - Stage U4a (2026-11-15): web UI Data page, part 1. See "Newest state: web UI U4a" below.
 - Stage U4b (2026-11-15): web UI Data page, part 2 (the cleaner). See "Newest state: web UI U4b" below.
 - Stage U5a (2026-11-15): web UI Training page, part 1 (plan, checkpoints, run numbers and log; read only). See "Newest state: web UI U5a" below.
+- Stage U5b (2026-11-15): web UI Training page, part 2 (start/stop/resume, live loss chart, rising-val warning). See "Newest state: web UI U5b" below.
 - Tests: 722 after U4b (705 after U4a, 688 after U3b; `python -m unittest discover -s tests`, 2 skipped without PyTorch); `test_handoff.py` needs this file.
 
 ## 6. Known problems
@@ -171,3 +172,15 @@ Next stage: U5b (start/stop prepare + train as a background process, live loss c
 - Safeguards: only work, work2, work3 and one run level below them (PathGuard); a run is `WORKFOLDER/RUNFOLDER` only; log files must be named `*.log` and sit directly in the run folder (last 64 KB, 200 lines); only the checkpoint's small meta block is read, never the weights, no pickle; the plan does not open the chat files named in project.json (their paths appear only inside the commands).
 - Limits: no loss chart yet (U5b). The trainer prints to the terminal, so a `.log` file exists only if you redirect output (PowerShell: `... | Tee-Object work3\\run_chat2\\train.log`); otherwise the log view is rebuilt from metrics.jsonl. The best step is not kept by the trainer, so a run past its best step can only be retrained. Browser check done once (headless Chromium: light, dark, 380 px wide, no console errors; a stray "null" text and a phone-width sideways scroll were found and fixed).
 - Run: `python -m persona_lm ui --root C:\\Users\\user\\persona_lm_project`, open Training.
+
+## Newest state: web UI U5b (Training page, part 2), 2026-11-15
+Next stage: U6a (Identity page). `docs/UI_PROMPT.md` has the plan.
+- Built: Training page card "Run a step": Start / "Resume from step N" for the NEXT pipeline step (pretrain-data, pretrain, chat-data, finetune), shown with its exact command and a confirm button. While it runs: progress bar, live loss chart (train line, val dots, ring on best step), log tail, "Stop and save" and "Force stop". Warning when val loss is more than 3 percent above its best (also in the run Details view and the chart there). Runs in the background and keeps going if the page or UI server closes; the page picks it up again.
+- SAFEGUARD NOTE (owner asked for this stage): first route that starts a program. The page sends only {workdir, step, confirm:true}; the command always comes from the project's pipeline plan (same as `pipeline run`). Not startable here: the tokenizer step (freezes tok.json), a step that is not NEXT, decisions not confirmed, tok.json fingerprint mismatch, any step using a file outside the project or in data_msgr/private (shown as a terminal command). One job at a time. No shell, one Popen, list arguments.
+- Endpoints: GET `/api/train/job?workdir=` (job state + which steps can start); POST `/api/train/start`, `/api/train/stop` (`{}` = save a checkpoint then end, `{"force":true}` = terminate). `/api/train/history` now also returns `rising`, `evals_since_best`, `last_val`.
+- Files: added `persona_lm/ui_job.py` (JobHub), `persona_lm/ui_jobrun.py` (wrapper: heartbeat + stop-file watcher, runs the normal CLI), `tests/test_ui_u5b.py` (29 tests), `tests/fake_jobrun.py` (stand-in trainer for tests). Changed `ui_server.py`, `ui_train.py` (history only; still read only), `ui_static/training.js`, `app.css`, `tests/test_ui_u0.py`, `tests/test_ui_u5a.py` (route table, stage name, SVG namespace allowed).
+- Files the job writes: `<work>/ui_job.json`, `<run>/ui_train.log` (training) or `<work>/ui_prepare.log`, `<work>/ui_job.stop` while a stop is asked. The log is also listed in the run Details log picker.
+- Limits: stop uses SIGINT raised inside the wrapper (same path as Ctrl+C); tested on Linux only, NOT on Windows: if "Stop and save" does not end the run within a minute, use Force stop (loses progress since the last checkpoint, default every 100 steps). A job with no heartbeat for 120 s shows as "no sign of life". The best step is still not kept by the trainer. Browser check done once (headless Chromium: light, dark, 380 px, no console errors, no sideways scroll; start, chart, warning, stop all worked with the stand-in trainer, not with real training).
+- Tests: 773 (2 skipped without PyTorch).
+- Run: `python -m persona_lm ui --root C:\\Users\\user\\persona_lm_project`, open Training, press Start on the NEXT step.
+

@@ -188,7 +188,7 @@ class ApiAuth(Base):
         st, _, body = self.api("GET", "/api/health")
         self.assertEqual((st, json.loads(body)), (200, {"ok": True}))
         info = json.loads(self.api("GET", "/api/info")[2])
-        self.assertEqual(info["stage"], "U5a")
+        self.assertEqual(info["stage"], "U5b")
         ids = [s["id"] for s in info["sections"]]
         for need in ("chat", "memory", "mood", "prompt", "data", "training", "identity", "proposals", "models", "export", "settings"):
             self.assertIn(need, ids)
@@ -309,6 +309,7 @@ class SafetyDesign(Base):
             "/api/chat/poll", "/api/chat/prompt", "/api/chat/sources", "/api/chat/state"}
     MEMORY = {"/api/memory/list", "/api/memory/plan", "/api/memory/add", "/api/memory/edit", "/api/memory/forget", "/api/memory/maintain",
               "/api/graph", "/api/mood", "/api/person", "/api/person/add", "/api/person/edit", "/api/person/remove"}   # U2a, U2b: owner-only, see test_ui_u2a.py
+    TRAIN = {"/api/train/start", "/api/train/stop", "/api/train/job"}                 # U5b: owner buttons, see test_ui_u5b.py
     DATA = {"/api/data/clean-apply"}                                                  # U4b: owner button, see test_ui_u4b.py
     PERSONA = {"/api/personas", "/api/personas/use"}                                  # U3b: owner button, see test_ui_u3b.py
     FORBIDDEN = re.compile(r"approve|reject|apply|identity|memory|exec|run|shell|command|promote|rollback|forget|chat|file|delete|write", re.I)
@@ -316,10 +317,10 @@ class SafetyDesign(Base):
     def test_route_table_has_no_dangerous_names(self):
         self.assertEqual(UI.ROUTES["POST"], ["/api/ping", "/api/chat/count", "/api/chat/load", "/api/chat/reset", "/api/chat/save", "/api/chat/send", "/api/chat/settings", "/api/chat/stop",
                                            "/api/personas/use", "/api/memory/add", "/api/memory/edit", "/api/memory/forget", "/api/memory/maintain",
-                                           "/api/person/add", "/api/person/edit", "/api/person/remove", "/api/data/clean-apply"])
+                                           "/api/person/add", "/api/person/edit", "/api/person/remove", "/api/data/clean-apply", "/api/train/start", "/api/train/stop"])
         for method, paths in UI.ROUTES.items():
             for p in paths:
-                if p.startswith("/api/") and p not in self.CHAT and p not in self.MEMORY and p not in self.PERSONA and p not in self.DATA:
+                if p.startswith("/api/") and p not in self.CHAT and p not in self.MEMORY and p not in self.PERSONA and p not in self.DATA and p not in self.TRAIN:
                     self.assertIsNone(self.FORBIDDEN.search(p), p)
 
     def test_dangerous_routes_do_not_exist_even_with_the_token(self):

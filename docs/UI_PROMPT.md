@@ -1,8 +1,8 @@
-# Web UI prompt (U0 to U5a done, then 7 small stages: U5b ... U7a, U7b)
+# Web UI prompt (U0 to U5b done, then 4 small stages: U6a ... U7a, U7b)
 
 Paste everything in the block below into a NEW AI session together with the newest project zip and `HANDOFF.md`.
-Change the last line (`Start with stage: U5b`) to the stage you want: U1a, U1b, U2a, U2b ... U7a, U7b. ONE stage per session.
-Status of each stage: HANDOFF.md, section 7 (rows U0 and U1a-U7b). U0 to U5a are built (2026-11-15); the rest follow the list below.
+Change the last line (`Start with stage: U6a`) to the stage you want: U1a, U1b, U2a, U2b ... U7a, U7b. ONE stage per session.
+Status of each stage: HANDOFF.md, section 7 (rows U0 and U1a-U7b). U0 to U5b are built (2026-11-15); the rest follow the list below.
 Why 14 small stages: the first plan had 7 big ones (U1-U7) and a session ran out of credit before it finished. Each old stage is now cut in two (a and b), so each one finishes inside one session.
 
 ```text
@@ -40,7 +40,7 @@ U3b DONE. Persona switcher (owner-side, through the runtime) and the personas pa
 U4a DONE. Data page, part 1. Messenger scan/import wizard, privacy audit view, data-report verdict.
 U4b DONE. Data page, part 2. The cleaner (clean_chat.py, one numbered file per chat, --input mode) with a before/after report, and the duplicate and repeated-reply report.
 U5a DONE. Training page, part 1. Pipeline plan with a done/NEXT checklist, checkpoints list, run logs read-only.
-U5b Training page, part 2. Start/stop of prepare and train as a background process, live loss chart (train and val), a warning when val loss rises, resume.
+U5b DONE. Training page, part 2. Start/stop of prepare and train as a background process, live loss chart (train and val), a warning when val loss rises, resume.
 U6a Identity page. Read-only core view, versions, lineage verify, probe scores and drift, promote/rollback only where the safeguards allow it.
 U6b Proposals page. List with a diff; approve/reject only through the existing confirmation rules.
 U7a Models compare + Export. Side-by-side replies of two checkpoints on the same prompts; export-package and verify-package with the privacy warning and an explicit confirm.
@@ -52,5 +52,5 @@ FOR EACH STAGE
 3. Update HANDOFF.md (short, as above).
 4. End with the ONE command I should run next, and what I should see.
 
-Start with stage: U5b
+Start with stage: U6a
 ```

@@ -197,8 +197,11 @@ class TrainHub:
         best = min(val, key=lambda r: r["val_loss"]) if val else None
         for v in val:
             v["best"] = bool(best and v is best)
+        after = [v for v in val if best and v["step"] > best["step"]]
+        rising = bool(after and val[-1]["val_loss"] > best["val_loss"] * RISE_WARN)         # U5b: the live warning
         return {"run": rel, "rows": len(rows), "train": self._thin(train, MAX_POINTS), "val": val[-MAX_POINTS:], "best": best,
-                "last_step": rows[-1]["step"] if rows else None, "has_metrics": bool(rows)}
+                "last_step": rows[-1]["step"] if rows else None, "has_metrics": bool(rows),
+                "rising": rising, "evals_since_best": len(after), "last_val": val[-1] if val else None}
 
     def log(self, run, file=""):
         rel, full = self._run(run)

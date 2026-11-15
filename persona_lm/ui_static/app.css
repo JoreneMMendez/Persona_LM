@@ -278,3 +278,22 @@ details.card > summary { cursor: pointer; font-weight: 600; }
 .training h3 { margin: var(--s3) 0 var(--s2); }
 .dstep.todo .dmark { opacity: .8; }
 .training, .training > * { min-width: 0; }
+
+/* Stage U5b: run controls and loss chart */
+.jobrow { display: flex; gap: var(--s3); align-items: center; justify-content: space-between; flex-wrap: wrap; padding: var(--s2) 0; border-top: 1px solid var(--line); }
+.jobrow p { margin: 2px 0 0; }
+.badge.muted { background: var(--surface-2); color: var(--ink-3); }
+.losschart { margin: var(--s3) 0; }
+.lc-svg { display: block; width: 100%; height: auto; max-height: 320px; }
+.lc-grid { stroke: var(--line); stroke-width: 1; }
+.lc-tick { fill: var(--ink-3); font-size: 11px; font-family: var(--font); }
+.lc-train { fill: none; stroke: var(--ink-3); stroke-width: 1.2; stroke-linejoin: round; }
+.lc-val { fill: none; stroke: var(--accent); stroke-width: 2.2; stroke-linejoin: round; }
+.lc-dot { fill: var(--accent); stroke: var(--surface); stroke-width: 1.5; }
+.lc-best { fill: none; stroke: var(--ok); stroke-width: 2.2; }
+.lc-legend { gap: var(--s4); color: var(--ink-2); }
+.lc-key { display: inline-block; vertical-align: middle; width: 16px; height: 0; border-top: 2px solid; margin-right: 4px; }
+.lc-key.train { border-color: var(--ink-3); border-top-width: 1px; }
+.lc-key.val { border-color: var(--accent); }
+.lc-key.best { width: 10px; height: 10px; border: 2px solid var(--ok); border-radius: 50%; }
+progress { accent-color: var(--accent); height: 14px; }

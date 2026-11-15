@@ -1,4 +1,4 @@
-"""The local web UI server (stages U0 to U5a). Python standard library only, offline, this computer only.
+"""The local web UI server (stages U0 to U5b). Python standard library only, offline, this computer only.
 
     python -m persona_lm ui                 # opens http://127.0.0.1:8777/ in your browser
     python -m persona_lm ui --port 9000 --no-open --root C:\\path\\to\\project
@@ -37,6 +37,7 @@ from .ui_chat import ChatHub, ChatProblem
 from .ui_data import DataHub, DataProblem
 from .ui_memory import MemoryHub, MemoryHubProblem
 from .ui_mind import MindHub, MindProblem
+from .ui_job import JobHub, JobProblem
 from .ui_train import TrainHub, TrainProblem
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -176,6 +177,7 @@ class UIState:
         self.mind = MindHub(self.guard)
         self.data = DataHub(self.guard)
         self.train = TrainHub(self.guard)
+        self.job = JobHub(self.guard)
 
     def allowed_hosts(self):
         return ("127.0.0.1:%d" % self.port, "localhost:%d" % self.port)
@@ -185,7 +187,7 @@ class UIState:
 
     def info(self):
         return {"name": "PersonaLM", "version": __version__, "project": os.path.basename(self.guard.root) or self.guard.root,
-                "sections": SECTIONS, "stage": "U5a", "uptime_s": int(time.time() - self.started)}
+                "sections": SECTIONS, "stage": "U5b", "uptime_s": int(time.time() - self.started)}
 
     def privacy(self):
         items = []
@@ -382,10 +384,12 @@ def make_handler(state):
                     out = h.checkpoints()
                 elif path == "/api/train/history":
                     out = h.history(one("run"))
+                elif path == "/api/train/job":
+                    out = state.job.status(one("workdir", "work"))
                 else:
                     out = h.log(one("run"), one("file"))
                 return self._json(200, {"ok": True, **out})
-            except TrainProblem as e:
+            except TrainProblem as e:                       # JobProblem is a TrainProblem
                 return self._error(e.code, str(e))
 
         def _mind(self, path, body):
@@ -470,6 +474,11 @@ def make_handler(state):
                     return self._json(200, {"ok": True, **state.data.clean_apply(body)})
                 except DataProblem as e:
                     return self._error(e.code, str(e))
+            if path in TRAIN_POST:                           # U5b: a step NAME only; the arguments come from the project plan (ui_job.py)
+                try:
+                    return self._json(200, {"ok": True, **(state.job.start(body) if path == "/api/train/start" else state.job.stop(body))})
+                except TrainProblem as e:
+                    return self._error(e.code, str(e))
             if path in MEMORY_POST:
                 return self._memory(path, urlsplit(self.path), body)
             if path in MIND_POST:
@@ -493,9 +502,10 @@ PERSONA_POST = ["/api/personas/use"]
 MIND_GET = ["/api/graph", "/api/mood", "/api/person"]
 DATA_GET = ["/api/data/audit", "/api/data/clean-preview", "/api/data/overview", "/api/data/repeats", "/api/data/report"]
 DATA_POST = ["/api/data/clean-apply"]
-TRAIN_GET = ["/api/train/checkpoints", "/api/train/history", "/api/train/log", "/api/train/plan"]       # U5a: read only
+TRAIN_GET = ["/api/train/checkpoints", "/api/train/history", "/api/train/job", "/api/train/log", "/api/train/plan"]       # U5a read only; U5b adds job (status)
+TRAIN_POST = ["/api/train/start", "/api/train/stop"]                                                                    # U5b: owner buttons, see ui_job.py
 MIND_POST = ["/api/person/add", "/api/person/edit", "/api/person/remove"]
-ROUTES = {"GET": ["/", "/api/health", "/api/info", "/api/privacy"] + CHAT_GET + PERSONA_GET + MEMORY_GET + MIND_GET + DATA_GET + TRAIN_GET + sorted(STATIC), "POST": ["/api/ping"] + CHAT_POST + PERSONA_POST + MEMORY_POST + MIND_POST + DATA_POST}
+ROUTES = {"GET": ["/", "/api/health", "/api/info", "/api/privacy"] + CHAT_GET + PERSONA_GET + MEMORY_GET + MIND_GET + DATA_GET + TRAIN_GET + sorted(STATIC), "POST": ["/api/ping"] + CHAT_POST + PERSONA_POST + MEMORY_POST + MIND_POST + DATA_POST + TRAIN_POST}
 
 
 def make_server(root=".", host="127.0.0.1", port=DEFAULT_PORT, token=None):
