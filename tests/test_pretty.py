@@ -29,7 +29,7 @@ class Display(unittest.TestCase):
         self.t[0] = 125
         d.log(line(45, 1.2345))
         text = "\n".join(d.render())
-        for want in ("45/105", "42%", "1.2345", "16,203 tok/s", "elapsed 0:02:05", "ETA 0:06:00"):
+        for want in ("45 / 105", "42%", "1.2345", "16,203 tok/s", "elapsed 0:02:05", "0:06:00"):
             self.assertIn(want, text)
 
     def test_best_val_and_arrows(self):
@@ -38,7 +38,8 @@ class Display(unittest.TestCase):
         d.log(line(30, 1.5, 1.0))
         d.log(line(45, 1.2, 1.1))
         text = "\n".join(d.render())
-        self.assertIn("best 1.0000 (step 30)", text)
+        self.assertIn("best  1.0000", text)
+        self.assertIn("step 30", text)
         self.assertEqual(d.best, (1.0, 30))
         self.assertIn("↑", text)           # val went up since the last check
 
@@ -56,8 +57,8 @@ class Display(unittest.TestCase):
         d.log("fp16 overflow, update skipped")
         out = self.out.getvalue()
         self.assertIn("fp16 overflow, update skipped\n", out)
-        self.assertEqual(out.count("15/105"), 2)                    # drawn, erased, message printed, drawn again under it
-        self.assertEqual(out.count("\x1b[3F\x1b[J"), 1)             # the 3-line panel was erased exactly once
+        self.assertEqual(out.count("15 / 105"), 2)                  # drawn, erased, message printed, drawn again under it
+        self.assertEqual(out.count("\x1b[%dF\x1b[J" % P.PANEL_H), 1)  # the whole dashboard was erased exactly once
 
     def test_summary_on_save(self):
         d = self.make()
@@ -91,6 +92,29 @@ class Display(unittest.TestCase):
             d.log(line(i * 35, 1.0, v, total=105))
         for ln in d.render():
             self.assertLessEqual(len(ln), 79, ln)
+
+    def test_dashboard_is_three_boxes_one_big_two_small(self):
+        d = self.make()
+        d.log(line(45, 1.2345, 1.1))
+        lines = d.render()
+        self.assertEqual(len(lines), P.PANEL_H)
+        self.assertEqual(sum(ln.count("╭") for ln in lines), 3)
+        for title in ("Training", "Validation", "Speed & Time"):
+            self.assertIn(title, "\n".join(lines))
+        self.assertEqual(len({len(ln) for ln in lines}), 1)         # every line is exactly as wide: the boxes line up
+
+    def test_boxes_line_up_with_colours_on_and_in_ascii(self):
+        for kw in ({"color": True}, {"unicode_ok": False}):
+            d = self.make(**kw)
+            for i, v in enumerate((1.5, 1.2, 1.3), 1):
+                d.log(line(i * 15, 2.0 - i * 0.1, v))
+            self.assertEqual(len({P.vlen(ln) for ln in d.render()}), 1)
+
+    def test_device_line_comes_from_the_backend_message(self):
+        d = self.make()
+        d.log("backend: PyTorch 2.14.1+cu130 on cuda (NVIDIA GeForce RTX 3050 6GB Laptop GPU), precision fp16")
+        d.log(line(15, 2.0))
+        self.assertIn("RTX 3050 6GB Laptop", "\n".join(d.render()))
 
 
 class MakeLog(unittest.TestCase):
