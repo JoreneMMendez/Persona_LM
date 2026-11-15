@@ -298,6 +298,32 @@ class MemoryStore:
             mem["pinned"] = bool(pinned)
         return mem
 
+    def edit(self, mid, text=None, emotion=None):
+        """Change a memory's text and/or emotion tag (the owner's explicit edit). The links to nodes are worked out again from the new
+        text; nodes left with no memory are removed. The caller saves."""
+        mem = self.get(mid)
+        if emotion is not None:
+            emotion = emotion.strip().lower()
+            if not _EMOTION.match(emotion):
+                raise MemoryProblem("The emotion tag must be one lowercase word (letters, digits, '-'), up to 24 characters, e.g. joy, sadness, stress.")
+        if text is not None:
+            text = " ".join(str(text).split())
+            if not text:
+                raise MemoryProblem("The text is empty. To remove a memory, forget it instead.")
+            if len(text) > MAX_TEXT:
+                raise MemoryProblem("That memory is %d characters; the limit is %d. Split it into several memories." % (len(text), MAX_TEXT))
+            backup = copy.deepcopy(self.data["nodes"])
+            try:
+                clean, ids = self._resolve_links(text)
+            except MemoryProblem:
+                self.data["nodes"] = backup
+                raise
+            mem["text"], mem["nodes"] = clean, ids
+            self.prune_nodes()
+        if emotion is not None:
+            mem["emotion"] = emotion
+        return mem
+
     # ------------------------------------------------------------------ strength, links
     def strength(self, mem, now=None, half_life=HALF_LIFE_DAYS):
         if mem.get("pinned"):

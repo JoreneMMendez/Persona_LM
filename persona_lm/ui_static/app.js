@@ -1,7 +1,8 @@
-// PersonaLM UI (stages U0, U1a): shell, theme, toasts, shortcuts, Settings/Privacy page, design kit.
+// PersonaLM UI (stages U0, U1a, U1b, U2a): shell, theme, toasts, shortcuts, Settings/Privacy page, design kit.
 // Everything is built with textContent / createElement (no innerHTML with data), and nothing is loaded from outside this server.
 
 import { chatPage } from './chat.js';
+import { memoryPage } from './memory.js';
 
 const TOKEN = document.querySelector('meta[name="plm-token"]').content;
 
@@ -160,7 +161,7 @@ function designPage(main) {
         h('div', { class: 'row' }, h('button', { class: 'btn', onclick: () => toast('Saved', 'ok') }, 'OK toast'), h('button', { class: 'btn', onclick: () => toast('Something failed', 'bad') }, 'Error toast'))))));
 }
 
-const PAGES = { chat: (main) => chatPage(main), settings: (main) => settingsPage(main), design: (main) => designPage(main) };
+const PAGES = { chat: (main) => chatPage(main), memory: (main) => memoryPage(main), settings: (main) => settingsPage(main), design: (main) => designPage(main) };
 
 // ---------- router + nav
 function route() {

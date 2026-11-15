@@ -46,8 +46,9 @@ Rebuilt on 2026-11-15 because the previous copy had been overwritten by notes fr
 - Stage U0: local web UI (`python -m persona_lm ui`).
 - Stage U1a (2026-11-15): web UI Chat core. See "Newest state: web UI U1a" below.
 - Stage U1b (2026-11-15): web UI chat controls. See "Newest state: web UI U1b" below.
+- Stage U2a (2026-11-15): web UI Memory page (list, search, add, edit, pin, forget, maintenance preview). See "Newest state: web UI U2a" below.
 - 2026-11-15: old-chat archive (`--archive`), `clean_chat.py` merge mode, s30m setup, s30m chat fine-tune run (overfit, see section 4).
-- Tests: 627 after U1b (`python -m unittest discover -s tests`, 2 skipped without PyTorch); `test_handoff.py` needs this file.
+- Tests: 653 after U2a (627 after U1b) (`python -m unittest discover -s tests`, 2 skipped without PyTorch); `test_handoff.py` needs this file.
 
 ## 6. Known problems
 - Chat quality is poor at the overfit checkpoint (section 4).
@@ -96,3 +97,11 @@ Next stage: U2a (memory list). `docs/UI_PROMPT.md` has the plan.
 - Files: changed `ui_chat.py`, `ui_server.py` (`saved_chats` in PathGuard and the Privacy page), `chat.js`, `app.css`, `.gitignore` (`saved_chats/`), `tests/test_ui_u0.py`, `tests/test_ui_u1a.py`; added `tests/test_ui_u1b.py`.
 - Limits: still not checked in a real browser; saved chats contain what you wrote (private, git-ignored); Save/Clear/Settings are disabled while a reply is written.
 
+## Newest state: web UI U2a (memory list), 2026-11-15
+Next stage: U2b (memory graph + mood + Person card). `docs/UI_PROMPT.md` has the plan.
+- Built: Memory page. Search (words, names, emotion, id; `/` focuses it), status filter, sort, "Show more" (100 per page), Add / Edit (text, emotion, importance, pin) in dialogs, one-click Pin/Unpin, Forget (dialog, then the id is sent back as `confirm`), Maintenance preview (fade / revive / duplicates / summaries) and Apply of exactly that preview.
+- Files: added `persona_lm/ui_memory.py` (MemoryHub), `ui_static/memory.js`, `tests/test_ui_u2a.py` (26 tests). Changed: `memory.py` (new `MemoryStore.edit()`: text/emotion, re-links names), `ui_server.py`, `app.js`, `app.css`, `index.html` (shortcut line), `tests/test_ui_u0.py` (route table, stage name, memory.js in the asset checks).
+- Endpoints (all need token + Host/Origin): GET `/api/memory/list?q=&status=&sort=&limit=&offset=`, `/api/memory/plan`; POST `/api/memory/add|edit|forget|apply`. These are the ONLY routes that write memory, owner-side. Chat routes still use say(): tested that "/remember", "/forget", "[[person:X]]" typed in the chat change nothing.
+- Safeguards: file is always project `memory.json` through PathGuard (no path from the page); read fresh on every request; a save over a file changed by another program is refused (409); `source` is always "owner"; `forget` needs `confirm == id` and removes the text from `memory.prev.json`; `apply` needs the `plan_id` of a fresh plan (else 409, nothing applied); the change log holds ids only, never texts.
+- Limits: not checked in a real browser (none in the build session): run the browser check once (light, dark, narrow width, console). Uses the project `memory.json` only, not an identity core's own memory file. Editing text rebuilds the node links from the new text (names not written in the text are dropped). Memory graph, mood and Person card are U2b.
+- Run: `python -m persona_lm ui --root C:\Users\user\persona_lm_project`, open the link, Memory page.

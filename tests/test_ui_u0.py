@@ -188,7 +188,7 @@ class ApiAuth(Base):
         st, _, body = self.api("GET", "/api/health")
         self.assertEqual((st, json.loads(body)), (200, {"ok": True}))
         info = json.loads(self.api("GET", "/api/info")[2])
-        self.assertEqual(info["stage"], "U1b")
+        self.assertEqual(info["stage"], "U2a")
         ids = [s["id"] for s in info["sections"]]
         for need in ("chat", "memory", "mood", "prompt", "data", "training", "identity", "proposals", "models", "export", "settings"):
             self.assertIn(need, ids)
@@ -303,21 +303,23 @@ class Guard(Base):
 
 
 class SafetyDesign(Base):
-    """No route can run a command, approve, change identity or write memory. U1a/U1b add ONLY the seven chat POST routes and three chat GET routes
-    below (see tests/test_ui_u1a.py); every other route must still have a harmless name."""
+    """No route can run a command, approve or change identity. U1a/U1b add ONLY the seven chat POST routes and three chat GET routes below
+    (tests/test_ui_u1a.py). U2a adds the owner-side Memory routes (tests/test_ui_u2a.py): four POST, two GET. Every other route must still have a harmless name."""
     CHAT = {"/api/chat/count", "/api/chat/load", "/api/chat/reset", "/api/chat/save", "/api/chat/send", "/api/chat/settings", "/api/chat/stop",
             "/api/chat/poll", "/api/chat/sources", "/api/chat/state"}
+    MEMORY = {"/api/memory/add", "/api/memory/apply", "/api/memory/edit", "/api/memory/forget", "/api/memory/list", "/api/memory/plan"}
     FORBIDDEN = re.compile(r"approve|reject|apply|identity|memory|exec|run|shell|command|promote|rollback|forget|chat|file|delete|write", re.I)
 
     def test_route_table_has_no_dangerous_names(self):
-        self.assertEqual(UI.ROUTES["POST"], ["/api/ping", "/api/chat/count", "/api/chat/load", "/api/chat/reset", "/api/chat/save", "/api/chat/send", "/api/chat/settings", "/api/chat/stop"])
+        self.assertEqual(UI.ROUTES["POST"], ["/api/ping", "/api/chat/count", "/api/chat/load", "/api/chat/reset", "/api/chat/save", "/api/chat/send", "/api/chat/settings", "/api/chat/stop",
+                                           "/api/memory/add", "/api/memory/apply", "/api/memory/edit", "/api/memory/forget"])
         for method, paths in UI.ROUTES.items():
             for p in paths:
-                if p.startswith("/api/") and p not in self.CHAT:
+                if p.startswith("/api/") and p not in self.CHAT and p not in self.MEMORY:
                     self.assertIsNone(self.FORBIDDEN.search(p), p)
 
     def test_dangerous_routes_do_not_exist_even_with_the_token(self):
-        for p in ("/api/chat", "/api/approve", "/api/proposals/approve", "/api/identity/apply", "/api/identity/promote", "/api/memory/add",
+        for p in ("/api/chat", "/api/approve", "/api/proposals/approve", "/api/identity/apply", "/api/identity/promote", "/api/memory/delete", "/api/memory/write",
                   "/api/exec", "/api/run", "/api/shell", "/api/command", "/api/file", "/api/read?path=data_msgr/private/raw_chat_notes.txt"):
             for m in ("GET", "POST"):
                 st, _, body = self.api(m, p, {"message": "/approve 1", "cmd": "del *", "path": "../x"} if m == "POST" else None)
@@ -338,7 +340,7 @@ class SafetyDesign(Base):
 
 
 class OfflineAssets(unittest.TestCase):
-    FILES = ("index.html", "app.css", "app.js", "chat.js", "favicon.svg")
+    FILES = ("index.html", "app.css", "app.js", "chat.js", "memory.js", "favicon.svg")
 
     def read(self, name):
         with open(os.path.join(STATIC_DIR, name), encoding="utf-8") as f:
@@ -359,7 +361,7 @@ class OfflineAssets(unittest.TestCase):
         self.assertIn("__TOKEN__", html)
 
     def test_no_unsafe_dom_sinks(self):
-        for name in ("app.js", "chat.js"):
+        for name in ("app.js", "chat.js", "memory.js"):
             js = self.read(name)
             self.assertNotRegex(js, r"\.innerHTML\s*=|insertAdjacentHTML|document\.write|\beval\(|new Function", name)
 
@@ -369,7 +371,7 @@ class OfflineAssets(unittest.TestCase):
             self.skipTest("Node.js is not installed")
         tmp = tempfile.mkdtemp()
         try:
-            for name in ("app.js", "chat.js"):
+            for name in ("app.js", "chat.js", "memory.js"):
                 p = os.path.join(tmp, name.replace(".js", ".mjs"))
                 shutil.copy(os.path.join(STATIC_DIR, name), p)
                 r = subprocess.run([node, "--check", p], capture_output=True, text=True)

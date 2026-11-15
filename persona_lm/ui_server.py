@@ -1,4 +1,4 @@
-"""The local web UI server (stages U0, U1a, U1b). Python standard library only, offline, this computer only.
+"""The local web UI server (stages U0, U1a, U1b, U2a). Python standard library only, offline, this computer only.
 
     python -m persona_lm ui                 # opens http://127.0.0.1:8777/ in your browser
     python -m persona_lm ui --port 9000 --no-open --root C:\\path\\to\\project
@@ -14,7 +14,8 @@ What this file guarantees (each point has a test in tests/test_ui_u0.py):
   * Project files are only touched through PathGuard: inside the project folder, not through a link out of it, and never
     data_msgr/private/ or any folder called private (or the raw Messenger exports). Stage U0 only checks that a few known
     names exist; it never lists or reads chat data.
-  * There is NO route that runs a command, approves a proposal, changes the identity or writes memory. Later stages add routes
+  * There is NO route that runs a command, approves a proposal or changes the identity. The ONLY routes that write memory are the owner-side
+    /api/memory/add|edit|forget|apply routes of the Memory page (U2a, ui_memory.py): no chat route and no model text can reach them. Later stages add routes
     one at a time; the typed confirmations stay in the terminal unless a stage says otherwise and was approved by the owner.
     U1a adds the chat routes (/api/chat/...; see ui_chat.py): a message is sent with say(), never handle(), so "/approve 1" is only text.
   * Nothing the owner types is logged by this server (the per-request log line is switched off).
@@ -32,6 +33,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from . import __version__
 from .ui_chat import ChatHub, ChatProblem
+from .ui_memory import MemoryHub, MemProblem
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(HERE, "ui_static")
@@ -46,6 +48,7 @@ STATIC = {
     "/static/app.css": ("app.css", "text/css; charset=utf-8"),
     "/static/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/static/chat.js": ("chat.js", "text/javascript; charset=utf-8"),
+    "/static/memory.js": ("memory.js", "text/javascript; charset=utf-8"),
     "/static/favicon.svg": ("favicon.svg", "image/svg+xml"),
 }
 INDEX_FILE = "index.html"
@@ -136,7 +139,7 @@ NEVER_LEAVES = [
 
 SECTIONS = [
     {"id": "chat", "label": "Chat", "stage": "U1", "icon": "chat", "ready": True},
-    {"id": "memory", "label": "Memory", "stage": "U2", "icon": "graph"},
+    {"id": "memory", "label": "Memory", "stage": "U2", "icon": "graph", "ready": True},
     {"id": "mood", "label": "Mood and Person", "stage": "U2", "icon": "heart"},
     {"id": "prompt", "label": "Prompt and personas", "stage": "U3", "icon": "layers"},
     {"id": "data", "label": "Data", "stage": "U4", "icon": "database"},
@@ -161,6 +164,7 @@ class UIState:
         self.token = token or secrets.token_urlsafe(32)
         self.started = time.time()
         self.chat = ChatHub(self.guard)
+        self.memory = MemoryHub(self.guard)
 
     def allowed_hosts(self):
         return ("127.0.0.1:%d" % self.port, "localhost:%d" % self.port)
@@ -170,7 +174,7 @@ class UIState:
 
     def info(self):
         return {"name": "PersonaLM", "version": __version__, "project": os.path.basename(self.guard.root) or self.guard.root,
-                "sections": SECTIONS, "stage": "U1b", "uptime_s": int(time.time() - self.started)}
+                "sections": SECTIONS, "stage": "U2a", "uptime_s": int(time.time() - self.started)}
 
     def privacy(self):
         items = []
@@ -298,6 +302,14 @@ def make_handler(state):
                     return self._json(200, {"ok": True, **state.privacy()})
                 if path in ("/api/chat/sources", "/api/chat/state", "/api/chat/poll"):
                     return self._chat_get(path, url)
+                if path in MEMORY_GET:
+                    try:
+                        if path == "/api/memory/plan":
+                            return self._json(200, {"ok": True, **state.memory.plan()})
+                        query = {k: v[0] for k, v in parse_qs(url.query).items()}
+                        return self._json(200, {"ok": True, **state.memory.list(query)})
+                    except (MemProblem, UIProblem) as e:
+                        return self._error(getattr(e, "code", 400), str(e))
                 return self._error(404, "no such route")
             if not self._gate(False):
                 return
@@ -363,6 +375,13 @@ def make_handler(state):
                     return self._json(200, {"ok": True, **out})
                 except ChatProblem as e:
                     return self._error(e.code, str(e))
+            if path in MEMORY_POST:
+                try:
+                    m = state.memory
+                    out = {"/api/memory/add": m.add, "/api/memory/edit": m.edit, "/api/memory/forget": m.forget, "/api/memory/apply": m.apply}[path](body)
+                    return self._json(200, {"ok": True, **out})
+                except (MemProblem, UIProblem) as e:
+                    return self._error(getattr(e, "code", 400), str(e))
             return self._error(404, "no such route")
 
         def do_PUT(self):
@@ -375,7 +394,9 @@ def make_handler(state):
 
 CHAT_GET = ["/api/chat/poll", "/api/chat/sources", "/api/chat/state"]
 CHAT_POST = ["/api/chat/count", "/api/chat/load", "/api/chat/reset", "/api/chat/save", "/api/chat/send", "/api/chat/settings", "/api/chat/stop"]
-ROUTES = {"GET": ["/", "/api/health", "/api/info", "/api/privacy"] + CHAT_GET + sorted(STATIC), "POST": ["/api/ping"] + CHAT_POST}
+MEMORY_GET = ["/api/memory/list", "/api/memory/plan"]
+MEMORY_POST = ["/api/memory/add", "/api/memory/apply", "/api/memory/edit", "/api/memory/forget"]
+ROUTES = {"GET": ["/", "/api/health", "/api/info", "/api/privacy"] + CHAT_GET + MEMORY_GET + sorted(STATIC), "POST": ["/api/ping"] + CHAT_POST + MEMORY_POST}
 
 
 def make_server(root=".", host="127.0.0.1", port=DEFAULT_PORT, token=None):

@@ -189,3 +189,25 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .drawer input[type=number] { width: 96px; }
 .chat-head > .row { justify-content: flex-end; }
 .drawer .dialog-actions { gap: var(--s2); }
+
+/* ---- memory page (U2a) */
+.mem-bar { display: grid; grid-template-columns: minmax(0, 1fr) 180px 200px; gap: var(--s2); }
+.mem-card { padding: var(--s2) var(--s4); }
+.mem-list li.mem { display: flex; gap: var(--s4); align-items: flex-start; padding: var(--s3) 0; }
+.mem.off .mem-text { color: var(--ink-3); }
+.mem-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.mem-meta { gap: var(--s2) var(--s3); margin-top: 6px; align-items: center; }
+.mem-nodes { gap: 6px; margin-top: 6px; }
+.mem-actions { display: flex; gap: 2px; flex: none; flex-wrap: wrap; justify-content: flex-end; }
+.chip { display: inline-block; font-size: .78rem; padding: 2px 9px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent-line); }
+.meter.mini { width: 56px; height: 6px; }
+.danger-text { color: var(--bad); }
+.mem-empty { display: block; text-align: center; padding: var(--s6) var(--s4); border-bottom: 0; }
+.mem-quote { margin: 0; padding: var(--s3) var(--s4); border-left: 3px solid var(--line-strong); background: var(--surface-2); border-radius: var(--r-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
+.mem-list h3, #main h3 { font-size: 1rem; margin: 0 0 4px; }
+input[type=range] { accent-color: var(--accent); flex: 1; min-width: 0; }
+@media (max-width: 860px) {
+  .mem-bar { grid-template-columns: 1fr; }
+  .mem-list li.mem { flex-direction: column; gap: var(--s2); }
+  .mem-actions { justify-content: flex-start; }
+}
