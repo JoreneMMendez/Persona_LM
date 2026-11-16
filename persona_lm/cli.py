@@ -1325,6 +1325,11 @@ def build_parser():
     _bt.add_arguments(s)
     s.set_defaults(fn=_bt.cmd)
 
+    s = sub.add_parser("hfdata", help="dataset recipes: stream a public Hugging Face dataset, filter + clean it, make token files (new / list / peek / run / tokens / colab-kit); see persona_lm/hfdata.py")
+    from . import hfdata as _hf
+    _hf.add_arguments(s)
+    s.set_defaults(fn=_hf.cmd)
+
     s = sub.add_parser("tok-check", help="read-only: is the frozen tokenizer unchanged and still used by every token folder and model? (persona_lm/tokcheck.py)")
     from . import tokcheck as _tc
     _tc.add_arguments(s)

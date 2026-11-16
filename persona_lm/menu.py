@@ -120,6 +120,12 @@ def _d_ckpt(a, f):
     return os.path.join(f["runs"][0]["path"], "ckpt.npz") if f["runs"] else ""
 
 
+def _check_recipe_id(val):
+    """Error text if the typed recipe id cannot be a recipe id, else None."""
+    from .hfdata import ID_RE
+    return None if ID_RE.match(val) else "a recipe id is 1-40 lowercase letters, digits, - or _"
+
+
 def _d_chat_ckpt(a, f):
     """For chatting: the newest run whose folder name has 'chat' (chat-tuned); a base run (run_pre) only when there is nothing else."""
     for r in f["runs"]:
@@ -166,7 +172,9 @@ HELP = {"lang": "which public text to get, comma separated: en (English), tl (Ta
         "tok": "the tokenizer the model was trained with",
         "system": "optional: a role to start the chat with, e.g. You are Aria.",
         "prompt": "the text for the model to continue",
-        "dir": "the folder to look at"}
+        "dir": "the folder to look at",
+        "hf_action": "new = a wizard that makes a recipe; list; show; peek = look at the first rows; run = stream + clean + write the output; assemble = build the output from what is saved; tokens = make token files; colab-kit = a zip for Google Drive",
+        "hf_recipe": "the recipe id (a file in dataset_recipes\\). Leave empty for new, or when you have only one recipe"}
 
 # ------------------------------------------------------------------ the training settings screen
 SETTINGS = [
@@ -334,6 +342,10 @@ ITEMS = [
     dict(label="Speed benchmark", cmd="benchmark", desc="Measure tokens per second on this computer and estimate training time.",
          fields=[_field("size", "Model size", "--size", _d_size, True, SIZES)]),
     dict(label="Check the GPU", cmd="check-gpu", desc="Check the PyTorch / GPU backend against the reference and print a report.", fields=[]),
+    dict(label="Dataset recipes (create / run)", cmd="hfdata",
+         desc="Stream a public Hugging Face dataset with a saved recipe (filters + cleaning), then make token files. 'new' asks questions and saves a recipe.",
+         fields=[_field("hf_action", "What to do", None, lambda a, f: "new", True, ("new", "list", "show", "peek", "run", "assemble", "tokens", "colab-kit")),
+                 _field("hf_recipe", "Recipe id", None, None, False, check=_check_recipe_id)]),
     dict(label="Language data (download)", cmd="corpus", desc="Download public English, Tagalog, Cebuano and Taglish text, clean it and check it.",
          fields=[_field("lang", "Languages", "--lang", _langs_default, True, check=_check_langs),
                  _field("mode", "What to do", "--mode", lambda a, f: "all", True, ("all", "clean")),

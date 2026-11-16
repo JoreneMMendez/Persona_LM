@@ -169,6 +169,16 @@ Chat page: pick a checkpoint + tokenizer (or an identity core), talk to it, Stop
 `ckpt.npz` (latest, written atomically; the previous one is kept as `ckpt.prev.npz`), `metrics.jsonl` (loss, validation loss, speed).
 A crash or power cut loses at most `--ckpt-every` steps (default 100) or `--ckpt-minutes` (default 10).
 
+## Dataset recipes (stream any public Hugging Face dataset; see docs/DATASET_GUIDE.md)
+
+    python -m persona_lm hfdata new                    # wizard: peeks at the first rows, asks for filters + cleaning, saves dataset_recipes/<id>.json
+    python -m persona_lm hfdata peek oshichats         # fields, samples, score quantiles, what each filter drops
+    python -m persona_lm hfdata run oshichats          # stream + filter + clean (resumable) -> public_clean/oshichats/
+    python -m persona_lm hfdata tokens oshichats --also public_mix\tl.jsonl public_mix\ceb.jsonl   # token files with work\tok.json
+    python -m persona_lm hfdata colab-kit oshichats    # zip for Google Drive + colab_hfdata.ipynb (free T4 GPU, resumable)
+
+Also in the menu: **Dataset recipes (create / run)**. Needs `pip install datasets`. Public text only.
+
 ## Tests
 `python -m unittest discover -s tests -v`  (262 tests, a few seconds; 2 of them need PyTorch and are skipped without it). They check, among other things:
 the gradients against finite differences (and that the check catches deliberately injected bugs), that loss falls,

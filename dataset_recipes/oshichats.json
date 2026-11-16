@@ -1,0 +1,50 @@
+{
+  "id": "oshichats",
+  "label": "OshiChats v2 (English VTuber live chat)",
+  "hf_repo": "pykeio/oshichats-v2",
+  "config": null,
+  "revision": null,
+  "split": "train",
+  "text_field": "message",
+  "filters": [
+    {
+      "field": "languages[0]",
+      "op": ">",
+      "value": 0.9
+    },
+    {
+      "field": "score",
+      "op": ">",
+      "value": 2.0
+    },
+    {
+      "field": "donation",
+      "op": "==",
+      "value": false
+    }
+  ],
+  "clean": {
+    "min_chars": 4,
+    "collapse_repeats": 3,
+    "dedup": true,
+    "emotes": "drop",
+    "scrub": true,
+    "tags": {
+      "liver": "[streamer]",
+      "fans": "[fans]",
+      "maybe-collaborator": "[streamer]",
+      "*": ""
+    }
+  },
+  "group": {
+    "by": "stream.id",
+    "lines": 30
+  },
+  "max_kept": 5000000,
+  "max_scanned": 0,
+  "shuffle_buffer": 0,
+  "shard_size": 100000,
+  "license": "CC-BY-4.0",
+  "attribution": "pykeio/oshichats-v2 (CC-BY-4.0)",
+  "private_only": true
+}

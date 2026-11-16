@@ -78,3 +78,7 @@ tok.seal.json
 
 # Stage 5: automatic copies of checkpoints/tokenizers made before training
 backups/
+
+# dataset recipes: token folders and Colab kits made by hfdata
+data_pre_*/
+colab_kit_*.zip
