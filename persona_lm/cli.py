@@ -200,11 +200,29 @@ def cmd_train(a):
         train(a.run, a.data_dir, cfg, hp, init_from=a.init_from, log=log)
 
 
-def _load_model(a):
+def is_base_run(ckpt_path):
+    """True when the checkpoint sits in a pretrained-base folder (name has 'pre' but not 'chat', e.g. work3\\run_pre). A base model cannot chat."""
+    name = os.path.basename(os.path.dirname(os.path.abspath(ckpt_path))).lower()
+    return "chat" not in name and "pre" in name
+
+
+def _load_model(a, chat=False):
+    if not os.path.isfile(a.ckpt) and not os.path.isfile(a.ckpt.replace(".npz", ".prev.npz")):
+        sys.exit("error: checkpoint not found: %s\nGive the path of a ckpt.npz file inside a run folder, e.g. work3\\run_chat2\\ckpt.npz" % a.ckpt)
+    if not os.path.isfile(a.tokenizer):
+        sys.exit("error: tokenizer file not found: %s\nUse the tokenizer the model was trained with, normally work\\tok.json." % a.tokenizer)
     got = load_ckpt(a.ckpt)
     if got is None:
-        sys.exit("cannot read checkpoint " + a.ckpt)
-    return got[0], Config.from_dict(got[2]["cfg"]), Tokenizer.load(a.tokenizer)
+        sys.exit("error: cannot read checkpoint %s (damaged, or not a Persona_LM checkpoint)" % a.ckpt)
+    tok = Tokenizer.load(a.tokenizer)
+    want = got[2].get("tokenizer_sha256")
+    if want and want != tok.fingerprint():
+        print("WARNING: this checkpoint was trained with a different tokenizer than %s. The output will be nonsense. "
+              "Use the tokenizer the model was trained with (normally work\\tok.json)." % a.tokenizer, file=sys.stderr)
+    if chat and is_base_run(a.ckpt):
+        print("WARNING: %s looks like a pretrained BASE run: it continues text but cannot chat. "
+              "Use a chat-tuned run (for example work3\\run_chat2)." % a.ckpt, file=sys.stderr)
+    return got[0], Config.from_dict(got[2]["cfg"]), tok
 
 
 def cmd_generate(a):
@@ -254,7 +272,7 @@ def cmd_chat(a):
             card = PER.load(a.person)
     except (EMO.EmotionProblem, PER.PersonProblem) as e:
         raise SystemExit("error: %s" % e)
-    params, cfg, tok = _load_model(a)
+    params, cfg, tok = _load_model(a, chat=True)
     system, left_out = a.system, []
     if core and system is None:
         count = lambda text: len(tok.encode(text, allow_special=False))
@@ -1293,4 +1311,12 @@ def main(argv=None):
             pass
     args = sys.argv[1:] if argv is None else list(argv)
     a = build_parser().parse_args(args or ["menu"])                # no arguments: the launcher menu
-    a.fn(a)
+    try:
+        a.fn(a)
+    except (KeyError, FileNotFoundError, NotADirectoryError, json.JSONDecodeError) as e:
+        if os.environ.get("PERSONA_DEBUG"):                         # set PERSONA_DEBUG=1 to see the full traceback
+            raise
+        what = ("a file or folder is missing: %s" % e.filename) if isinstance(e, (FileNotFoundError, NotADirectoryError)) and e.filename else \
+            ("a file is not the kind this command expects (%s: %s)" % (type(e).__name__, e))
+        raise SystemExit("error: %s\nCheck the paths you typed (the run folder, ckpt.npz, tokenizer, token folder). "
+                         "For the full details set PERSONA_DEBUG=1 and run again." % what)

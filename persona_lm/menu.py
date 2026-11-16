@@ -120,6 +120,14 @@ def _d_ckpt(a, f):
     return os.path.join(f["runs"][0]["path"], "ckpt.npz") if f["runs"] else ""
 
 
+def _d_chat_ckpt(a, f):
+    """For chatting: the newest run whose folder name has 'chat' (chat-tuned); a base run (run_pre) only when there is nothing else."""
+    for r in f["runs"]:
+        if "chat" in os.path.basename(os.path.normpath(r["path"])).lower():
+            return os.path.join(r["path"], "ckpt.npz")
+    return _d_ckpt(a, f)
+
+
 def _d_data(a, f):
     return f["data"][0] if f["data"] else ""
 
@@ -314,8 +322,8 @@ ITEMS = [
     dict(label="Train or resume a run", cmd="train", settings=True, desc="Start training, or continue a run exactly where it stopped. You can review and change the numbers first.",
          fields=[_field("run", "Run folder", "--run", _d_run, True), _field("data", "Token folder", "--data-dir", _d_data, True),
                  _field("size", "Model size", "--size", _d_size, True, SIZES), _field("init", "Start from weights", "--init-from")]),
-    dict(label="Chat with a model", cmd="chat", desc="Talk to a trained model in this window.",
-         fields=[_field("ckpt", "Checkpoint", "--ckpt", _d_ckpt, True), _field("tok", "Tokenizer", "--tokenizer", _d_tok, True),
+    dict(label="Chat with a model", cmd="chat", desc="Talk to a trained model in this window. Starts with the newest chat-tuned run (run_chat*); a base run (run_pre) cannot chat.",
+         fields=[_field("ckpt", "Checkpoint", "--ckpt", _d_chat_ckpt, True), _field("tok", "Tokenizer", "--tokenizer", _d_tok, True),
                  _field("system", "System prompt", "--system")]),
     dict(label="Generate text", cmd="generate", desc="Continue a prompt with a model, once, and print it.",
          fields=[_field("ckpt", "Checkpoint", "--ckpt", _d_ckpt, True), _field("tok", "Tokenizer", "--tokenizer", _d_tok, True),

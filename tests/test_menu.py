@@ -30,7 +30,7 @@ def make_project(root, size="s30m", step=18300, steps=36000):
     with open(os.path.join(data, "meta.json"), "w") as f:
         json.dump({"vocab_size": 8000}, f)
     with open(os.path.join(root, "work3", "tok.json"), "w") as f:
-        f.write("{}")
+        f.write('{"merges": [], "specials": []}')
 
 
 def keys(*seq):
