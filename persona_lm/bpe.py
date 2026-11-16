@@ -200,4 +200,7 @@ class Tokenizer:
     def load(cls, path):
         with open(path, encoding="utf-8") as f:
             d = json.load(f)
+        if not isinstance(d, dict) or "merges" not in d or "specials" not in d:
+            raise SystemExit("error: %s is not a Persona_LM tokenizer file (it has no 'merges' / 'specials'). "
+                             "Use the tokenizer the model was trained with, normally work\\tok.json." % path)
         return cls(d["merges"], d["specials"])

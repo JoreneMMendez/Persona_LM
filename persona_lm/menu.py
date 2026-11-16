@@ -49,6 +49,18 @@ def run_info(ckpt_path):
         return "?", 0, 0
 
 
+def _is_tokenizer(path):
+    """True only for a real tokenizer file (has "merges" and "specials"); other tok*.json files (e.g. tok.seal.json) are ignored."""
+    try:
+        if os.path.getsize(path) > 20_000_000:
+            return False
+        with open(path, encoding="utf-8") as f:
+            j = json.load(f)
+        return isinstance(j, dict) and "merges" in j and "specials" in j
+    except (OSError, ValueError):
+        return False
+
+
 def scan(root, depth=3):
     """Finds runs (folders with ckpt.npz), token folders (meta.json with vocab_size) and tokenizers (tok*.json) up to `depth` folders down."""
     found = {"runs": [], "data": [], "toks": [], "torch": importlib.util.find_spec("torch") is not None}
@@ -68,8 +80,9 @@ def scan(root, depth=3):
                     if "vocab_size" in json.load(f):
                         found["data"].append((os.path.getmtime(os.path.join(d, "meta.json")), shown))
             for fn in files:
-                if fn.lower().startswith("tok") and fn.lower().endswith(".json"):
-                    found["toks"].append((os.path.getmtime(os.path.join(d, fn)), os.path.normpath(os.path.join(shown, fn))))
+                if fn.lower().startswith("tok") and fn.lower().endswith(".json") and _is_tokenizer(os.path.join(d, fn)):
+                    # tok.json (the frozen tokenizer the models were trained with) always comes first; other valid ones by date
+                    found["toks"].append((fn.lower() == "tok.json", os.path.getmtime(os.path.join(d, fn)), os.path.normpath(os.path.join(shown, fn))))
         except (OSError, ValueError):
             continue
     found["runs"].sort(reverse=True)
@@ -79,7 +92,7 @@ def scan(root, depth=3):
     for r in found["runs"][:1]:                          # only the newest is opened (the others when asked), so the menu opens fast
         r["size"], r["step"], r["steps"] = run_info(r["ckpt"])
     found["data"] = [p for _, p in found["data"]]
-    found["toks"] = [p for _, p in found["toks"]]
+    found["toks"] = [p for _, _, p in found["toks"]]
     return found
 
 
@@ -318,7 +331,6 @@ ITEMS = [
                  _field("mode", "What to do", "--mode", lambda a, f: "all", True, ("all", "clean")),
                  _field("mix", "Also rebuild the training mix", "--mix", lambda a, f: "no", False, ("no", "yes"), switch=True)]),
     dict(label="Language data -> token files", cmd="build-tokens", desc="One click: turn the cleaned language data into token files in a NEW folder. Uses work\\tok.json (only read). No internet.", fields=[]),
-    dict(label="Check the frozen tokenizer", cmd="tok-check", desc="Read-only. Shows if work\\tok.json is unchanged, and which token folders and models use it.", fields=[]),
     dict(label="Quit", cmd=None, desc="Leave the menu.", fields=[]),
 ]
 QUIT = len(ITEMS) - 1
