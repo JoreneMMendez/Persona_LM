@@ -1,5 +1,4 @@
 """Sampling text from a trained model, and a plain chat loop."""
-import sys
 
 import numpy as np
 
@@ -54,29 +53,3 @@ def chat_prompt_ids(tok, messages):
     for role, content in messages:
         ids += [ROLE_ID[role]] + tok.encode(content, allow_special=False) + [END]
     return ids + [ASSISTANT]
-
-
-def chat_loop(params, cfg, tok, system=None, **kw):
-    history = [("system", system)] if system else []
-    print("Type a message. /reset starts over, /quit leaves.")
-    while True:
-        try:
-            line = input("you> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            return
-        if line == "/quit":
-            return
-        if line == "/reset":
-            history = [("system", system)] if system else []
-            continue
-        if not line:
-            continue
-        history.append(("user", line))
-        ids = chat_prompt_ids(tok, history)
-        if len(ids) > cfg.ctx - 8:                         # keep the newest part that fits
-            ids = ids[-(cfg.ctx - 8):]
-        reply = tok.decode(sample_ids(params, cfg, ids, **kw))
-        print("ai> " + reply)
-        sys.stdout.flush()
-        history.append(("assistant", reply))

@@ -19,7 +19,6 @@ What this can and cannot do (tests in tests/test_ui_u5b.py):
 """
 import json
 import os
-import re
 import signal
 import subprocess
 import sys

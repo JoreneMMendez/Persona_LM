@@ -9,7 +9,6 @@ trained model read garbage. So `pipeline run --step tokenizer` needs `pipeline c
 """
 import json
 import os
-import shlex
 import subprocess
 import time
 

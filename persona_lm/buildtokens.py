@@ -13,7 +13,6 @@ Needs no internet. The menu item "Language data -> token files" runs exactly thi
 """
 import os
 import shutil
-import sys
 import time
 
 TOKENIZERS = (os.path.join("work", "tok.json"), "tok.json")

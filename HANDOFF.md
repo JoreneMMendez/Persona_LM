@@ -5,11 +5,11 @@ Anything marked (unverified) was not checked on the owner's computer.
 
 ## CURRENT FOCUS (read this first)
 The owner wants to work on the NEW CHANGES: the staged cleanup and improvements in the prompt at the end of this file ("Prompt for an AI to clean and improve the project"). Start with Stage 1 unless the owner says another stage. If the owner types just "stages" or "new changes", that means: continue the staged plan from the first stage that is not marked DONE below.
-Stage status: Stage 1 not done | Stage 2 not done | Stage 3 partly done (menu ignores non-tokenizer files, 2026-11-16) | Stage 4 not done | Stage 5 not done | Stage 6 not done | Stage 7 not done. (Update this line at the end of every stage.)
+Stage status: Stage 1 DONE (audit) | Stage 2 DONE (safe cleanup, 2026-11-16) | Stage 3 partly done (menu ignores non-tokenizer files, 2026-11-16) | Stage 4 not done | Stage 5 not done | Stage 6 not done | Stage 7 not done. (Update this line at the end of every stage.)
 
 ## START HERE
 - **CURRENT GOAL (owner, 2026-11-16): work on the cleanup/improvement STAGES 1 to 7 in the last section ("Prompt for an AI to clean and improve the project").** When a new session starts, do not ask what to do: continue with the next stage that is not done yet (see "Stage progress" below), do only that one stage, and finish it with the changed-files zip plus the PowerShell commands (copy files, run tests, `git add`, `commit`, `pull --rebase`, `push origin main`).
-- Stage progress (update after every stage): Stage 1 not done, Stage 2 not done, Stage 3 not done (the menu tokenizer fix is already in), Stage 4 not done, Stage 5 not done, Stage 6 not done, Stage 7 not done.
+- Stage progress (update after every stage): Stage 1 DONE, Stage 2 DONE, Stage 3 not done (the menu tokenizer fix is already in), Stage 4 not done, Stage 5 not done, Stage 6 not done, Stage 7 not done.
 - Owner: Jorene. Windows, PowerShell, project folder `C:\Users\user\persona_lm_project`. GPU: RTX 3050 6 GB laptop. PyTorch + CUDA, bf16.
 - What it is: tokenizer, transformer with hand-written backprop, AdamW, resumable training, chat tuning, sampling, GGUF export, local web UI. Personal chat AI trained on the owner's Messenger chats (Cebuano/Bisaya, Tagalog, English).
 - Run tests: `python -m unittest discover -s tests -v`. Commands are in README.md.
@@ -181,3 +181,8 @@ De-duplication report, real vs synthetic ratio, train/val leak check. Read-only:
 ### Stage 7: Proposals (no code until I choose)
 Suggest more improvements, each with what it does, effort (S/M/L), risk to my data, and how to test it (for example a larger ~100M model with a data-size guide, Windows checks, a better README). Wait for my choice.
 ```
+
+
+## Stage 1/2 log (2026-11-16)
+- Stage 1 audit: baseline 915 tests, 1 failure (tests/test_menu.py fixture writes `{}` as tok.json; menu now needs merges+specials; fix in Stage 3).
+- Stage 2: removed unused imports (buildtokens sys, pipeline shlex, proposals time, ui_job re), removed unused `generate.chat_loop` and its `import sys`, widened .gitignore. Owner moves `run_scraper.py`, `python_reddit_bisaya_scraper.py`, `bisaya_chats.csv`, `bisaya_data.csv` to `_to_delete\`. Not touched: re-export imports in cli/identity/ui_server, doc renames.

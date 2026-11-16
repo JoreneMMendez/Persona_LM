@@ -63,3 +63,15 @@ data_clean/
 
 pex_raw/
 data_pre_new*/
+
+# extra safety net (Stage 2, 2026-11-16): any data/model folder variant and raw data files
+work*/
+data_msgr*/
+data_chat*/
+data_clean*/
+data_pre*/
+public_*/
+*.bin
+*.csv
+*.bak
+tok.seal.json
