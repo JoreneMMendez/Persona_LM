@@ -318,6 +318,7 @@ ITEMS = [
                  _field("mode", "What to do", "--mode", lambda a, f: "all", True, ("all", "clean")),
                  _field("mix", "Also rebuild the training mix", "--mix", lambda a, f: "no", False, ("no", "yes"), switch=True)]),
     dict(label="Language data -> token files", cmd="build-tokens", desc="One click: turn the cleaned language data into token files in a NEW folder. Uses work\\tok.json (only read). No internet.", fields=[]),
+    dict(label="Check the frozen tokenizer", cmd="tok-check", desc="Read-only. Shows if work\\tok.json is unchanged, and which token folders and models use it.", fields=[]),
     dict(label="Quit", cmd=None, desc="Leave the menu.", fields=[]),
 ]
 QUIT = len(ITEMS) - 1

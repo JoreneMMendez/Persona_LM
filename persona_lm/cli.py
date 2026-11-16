@@ -1270,6 +1270,11 @@ def build_parser():
     _bt.add_arguments(s)
     s.set_defaults(fn=_bt.cmd)
 
+    s = sub.add_parser("tok-check", help="read-only: is the frozen tokenizer unchanged and still used by every token folder and model? (persona_lm/tokcheck.py)")
+    from . import tokcheck as _tc
+    _tc.add_arguments(s)
+    s.set_defaults(fn=_tc.cmd)
+
     s = sub.add_parser("menu", help="the launcher menu (also what runs when you type just `python -m persona_lm`)")
     s.add_argument("--root", default=".", help="the project folder to look in for runs, token folders and tokenizers (default: here)")
     s.set_defaults(fn=cmd_menu)
