@@ -193,11 +193,11 @@ def cmd_train(a):
     if choose_backend(a.backend) == "torch":
         from .torch_backend import train_torch
         train_torch(a.run, a.data_dir, cfg, hp, init_from=a.init_from, log=log, device=a.device, precision=a.precision, deterministic=a.deterministic,
-                    cpu_share=a.cpu_share, cpu_threads=a.cpu_threads)
+                    cpu_share=a.cpu_share, cpu_threads=a.cpu_threads, tokenizer=getattr(a, "tokenizer", None), backup=not getattr(a, "no_backup", False))
     else:
         if str(a.cpu_share) != "0":
             print("note: --cpu-share is ignored: the NumPy backend already trains on the CPU only")
-        train(a.run, a.data_dir, cfg, hp, init_from=a.init_from, log=log)
+        train(a.run, a.data_dir, cfg, hp, init_from=a.init_from, log=log, tokenizer=getattr(a, "tokenizer", None), backup=not getattr(a, "no_backup", False))
 
 
 def is_base_run(ckpt_path):
@@ -1010,7 +1010,14 @@ def build_parser():
                    "or auto (times both and picks). Default 0 = GPU only. Needs --accum 2 or more and extra RAM; only helps if the CPU is not far slower than the GPU")
     s.add_argument("--cpu-threads", type=int, default=None, help="CPU threads for --cpu-share (default: all cores minus 2)")
     s.add_argument("--plain", action="store_true", help="plain log lines instead of the live panel (the panel only appears on a real terminal anyway)")
+    s.add_argument("--tokenizer", default=None, help="also back up this tokenizer file into <run>\\backups\\ before training (a copy; the original is never touched)")
+    s.add_argument("--no-backup", action="store_true", help="skip the automatic backup of ckpt.npz (and the tokenizer) into <run>\\backups\\ before training")
     s.set_defaults(fn=cmd_train)
+
+    s = sub.add_parser("doctor", help="read-only health check: do tokenizer, token folders and checkpoints match, is a run overfitting? Says what to do (persona_lm/doctor.py)")
+    from . import doctor as _doc
+    _doc.add_arguments(s)
+    s.set_defaults(fn=_doc.cmd)
 
     for name, fn in (("generate", cmd_generate), ("chat", cmd_chat), ("export-gguf", cmd_export)):
         s = sub.add_parser(name)

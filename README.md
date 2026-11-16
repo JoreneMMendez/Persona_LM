@@ -146,6 +146,12 @@ The same thing is in the Web UI under **Language data**. Output: `public_clean/<
 
 Chat page: pick a checkpoint + tokenizer (or an identity core), talk to it, Stop a reply, see how much of the window is used, change temperature / top-k / reply length, save the conversation to `saved_chats/`, clear it, and (optionally) see the mood badge. Text you type is never a command. More pages arrive stage by stage.
 
+## Safety tools (cleanup Stage 5)
+- `python -m persona_lm doctor` (read-only): checks that the tokenizer, token folders and checkpoints match each other and says in plain words what is wrong (`--deep` also looks for NaN/inf in the weights).
+- Before every `train` run, `ckpt.npz` (and the tokenizer if you add `--tokenizer work\\tok.json`) is copied to `<run>\\backups\\<time>\\`. Turn off with `--no-backup`. Old backups are never deleted automatically.
+- `ckpt.best.npz` in the run folder = the weights at the lowest validation loss (chat with it: `--ckpt work3\\run_chat2\\ckpt.best.npz`). Turn off with `--save-best 0`.
+- `--early-stop 3` stops training after 3 validation checks in a row without improvement (default off).
+
 ## Data formats
 - Pretraining: `.txt`, `.md` (any folder of them), `.jsonl`/`.json` with strings or `{"text": "..."}`.
 - Chat: `{"messages": [{"role": "system|user|assistant", "content": "..."}]}`, or `{"prompt": ..., "reply": ...}`,

@@ -19,10 +19,13 @@ from .ckpt import load_ckpt, save_ckpt
 from .data import Stream
 from .model import Config, init_params, loss_and_grads, zero_grads, forward
 from .optim import AdamW, clip_grad_norm, lr_at
+from .safety import backup_before_training, is_new_best, save_best, should_early_stop
 
 DEFAULT_HP = dict(
     batch=8, accum=4, lr=6e-4, min_lr=6e-5, warmup=100, steps=10000, weight_decay=0.1, clip=1.0,
     eval_every=200, eval_batches=10, ckpt_every=100, ckpt_minutes=10, log_every=10, seed=1337,
+    early_stop=0,           # stop after this many validation checks in a row without a new best (0 = off)
+    save_best=1,            # 1 = keep the best-validation weights in ckpt.best.npz (0 = off)
     loss_norm="batch",      # "batch": divide by ALL trained tokens of the step (correct). "micro": legacy, per micro-batch (old chat runs)
 )
 
@@ -153,7 +156,7 @@ def open_streams(data_dir, cfg):
     return train_s, val_s
 
 
-def train(run_dir, data_dir, cfg=None, hp=None, init_from=None, log=print, max_steps_this_call=None):
+def train(run_dir, data_dir, cfg=None, hp=None, init_from=None, log=print, max_steps_this_call=None, tokenizer=None, backup=True):
     """Train (or continue) the run in run_dir. Returns the final params.
 
     cfg is needed for a new run. If run_dir already has a checkpoint it is resumed and cfg/hp come from it
@@ -163,6 +166,8 @@ def train(run_dir, data_dir, cfg=None, hp=None, init_from=None, log=print, max_s
     """
     ck_path = os.path.join(run_dir, "ckpt.npz")
     stop = install_stop_flag()
+    if backup:
+        backup_before_training(run_dir, tokenizer, log)          # before anything can change the files
     st = start_or_resume(run_dir, data_dir, cfg, hp, init_from, log)
     params, cfg, hp, step, history, rng = st.params, st.cfg, st.hp, st.step, st.history, st.rng
     opt = AdamW(params, weight_decay=hp["weight_decay"])
@@ -174,6 +179,7 @@ def train(run_dir, data_dir, cfg=None, hp=None, init_from=None, log=print, max_s
     last_ck = time.time()
     t0 = time.time()
     done_here = 0
+    early = False
     tokens_per_step = hp["batch"] * hp["accum"] * cfg.ctx
 
     def checkpoint():
@@ -207,9 +213,17 @@ def train(run_dir, data_dir, cfg=None, hp=None, init_from=None, log=print, max_s
                 step, hp["steps"], loss, (" val %.4f" % rec["val_loss"]) if "val_loss" in rec else "", lr, tps, eta / 3600))
             with open(os.path.join(run_dir, "metrics.jsonl"), "a") as f:
                 f.write(json.dumps(rec) + "\n")
+        if "val_loss" in rec:
+            if hp["save_best"] and is_new_best(history):
+                save_best(run_dir, params, _meta(cfg, hp, step, rng, history, st.tok_hash, {"name": "numpy", "best": True}))
+                log("new best validation loss %.4f at step %d, saved to ckpt.best.npz" % (rec["val_loss"], step))
+            if should_early_stop(history, hp["early_stop"]):
+                log("early stop: validation loss has not improved for %d checks in a row. The best weights are in ckpt.best.npz." % hp["early_stop"])
+                early = True
+                break
         if step % hp["ckpt_every"] == 0 or time.time() - last_ck > hp["ckpt_minutes"] * 60:
             checkpoint()
             last_ck = time.time()
     checkpoint()
-    log("saved checkpoint at step %d%s" % (step, " (stopped early)" if stop["flag"] else ""))
+    log("saved checkpoint at step %d%s" % (step, " (stopped early)" if stop["flag"] or early else ""))
     return params

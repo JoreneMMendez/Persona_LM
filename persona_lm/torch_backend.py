@@ -31,6 +31,7 @@ except ImportError:                      # allowed: the NumPy backend still work
 
 from .backend import NO_TORCH_MSG
 from .ckpt import save_ckpt
+from .safety import backup_before_training, is_new_best, save_best, should_early_stop
 from .model import Config, init_params
 from .optim import lr_at
 from .train import (_meta, install_stop_flag, open_streams, start_or_resume, step_denominators)
@@ -387,7 +388,7 @@ def probe_cpu_share(p, p_cpu, cfg, batch, device, precision, accum, log=print):
 
 # ------------------------------------------------------------------ training loop
 def train_torch(run_dir, data_dir, cfg=None, hp=None, init_from=None, log=print, max_steps_this_call=None,
-                device="auto", precision="auto", deterministic=False, cpu_share="0", cpu_threads=None):
+                device="auto", precision="auto", deterministic=False, cpu_share="0", cpu_threads=None, tokenizer=None, backup=True):
     """Same contract as train.train(), on PyTorch. Reads and writes the same ckpt.npz, so a run can be started on one machine
     (or backend) and continued on another."""
     _need_torch()
@@ -398,6 +399,8 @@ def train_torch(run_dir, data_dir, cfg=None, hp=None, init_from=None, log=print,
     prec = pick_precision(dev, precision)
     ck_path = os.path.join(run_dir, "ckpt.npz")
     stop = install_stop_flag()
+    if backup:
+        backup_before_training(run_dir, tokenizer, log)          # before anything can change the files
     st = start_or_resume(run_dir, data_dir, cfg, hp, init_from, log)
     cfg, hp, step, history, rng = st.cfg, st.hp, st.step, st.history, st.rng
     p = params_to_torch(st.params, dev)
@@ -411,6 +414,7 @@ def train_torch(run_dir, data_dir, cfg=None, hp=None, init_from=None, log=print,
 
     train_s, val_s = open_streams(data_dir, cfg)
     last_ck, t0, done_here, skipped = time.time(), time.time(), 0, 0
+    early = False
     tokens_per_step = hp["batch"] * hp["accum"] * cfg.ctx
 
     # CPU + GPU together: cpu_share = "0" (off), "auto" (time both and choose) or a number of micro-batches per step for the CPU
@@ -478,11 +482,20 @@ def train_torch(run_dir, data_dir, cfg=None, hp=None, init_from=None, log=print,
                 step, hp["steps"], loss, (" val %.4f" % rec["val_loss"]) if "val_loss" in rec else "", lr, tps, eta / 3600))
             with open(os.path.join(run_dir, "metrics.jsonl"), "a") as f:
                 f.write(json.dumps(rec) + "\n")
+        if "val_loss" in rec:
+            if hp["save_best"] and is_new_best(history):
+                save_best(run_dir, params_to_numpy(p), _meta(cfg, hp, step, rng, history, st.tok_hash,
+                                                             {"name": "torch", "device": str(dev), "precision": prec, "best": True}))
+                log("new best validation loss %.4f at step %d, saved to ckpt.best.npz" % (rec["val_loss"], step))
+            if should_early_stop(history, hp["early_stop"]):
+                log("early stop: validation loss has not improved for %d checks in a row. The best weights are in ckpt.best.npz." % hp["early_stop"])
+                early = True
+                break
         if step % hp["ckpt_every"] == 0 or time.time() - last_ck > hp["ckpt_minutes"] * 60:
             checkpoint()
             last_ck = time.time()
     checkpoint()
-    log("saved checkpoint at step %d%s" % (step, " (stopped early)" if stop["flag"] else ""))
+    log("saved checkpoint at step %d%s" % (step, " (stopped early)" if stop["flag"] or early else ""))
     return params_to_numpy(p)
 
 

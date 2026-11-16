@@ -7,14 +7,14 @@ import numpy as np
 FORMAT_VERSION = 2      # 1 = original files (no version field). 2 adds format_version, tokenizer_sha256, backend info. Loading both works.
 
 
-def save_ckpt(path, params, opt_arrays, meta):
+def save_ckpt(path, params, opt_arrays, meta, keep_prev=True):
     meta = {"format_version": FORMAT_VERSION, **meta}
     arrays = {"p." + k: v for k, v in params.items()}
     arrays.update(opt_arrays)
     arrays["meta"] = np.frombuffer(json.dumps(meta).encode("utf-8"), dtype=np.uint8)
     tmp = path + ".tmp.npz"
     np.savez(tmp, **arrays)
-    if os.path.exists(path):
+    if keep_prev and os.path.exists(path):
         os.replace(path, path.replace(".npz", ".prev.npz"))     # keep the last good one as a fallback
     os.replace(tmp, path)
 
