@@ -1,0 +1,88 @@
+{
+  "train_dir": "data_clean\\train",
+  "val_dir": "data_clean\\val",
+  "dedup": {
+    "examples": 4611,
+    "exact_duplicate_examples": 0,
+    "unique_examples": 4611,
+    "trained_replies": 4611,
+    "distinct_replies": 3582,
+    "distinct_reply_buckets_by_times_used": {
+      "1": 2935,
+      "2-3": 639,
+      "4-10": 8,
+      "over 10": 0
+    },
+    "share_of_replies_used_more_than_3_times": 0.0082,
+    "replies_over_clean_data_limit": 0
+  },
+  "real_vs_synthetic": {
+    "files": [
+      {
+        "file": "merged_chats_clean_mood_cleanData.jsonl",
+        "examples": 973,
+        "bad_lines": 0,
+        "trained_replies": 973,
+        "trained_chars": 51596,
+        "share_of_trained_replies": 0.211,
+        "real": true
+      },
+      {
+        "file": "synthetic_chats_100k_cleanData.jsonl",
+        "examples": 3638,
+        "bad_lines": 0,
+        "trained_replies": 3638,
+        "trained_chars": 78525,
+        "share_of_trained_replies": 0.789,
+        "real": false
+      }
+    ],
+    "real_marked": true,
+    "real_replies": 973,
+    "synthetic_replies": 3638,
+    "real_share": 0.211,
+    "real_files": [
+      "merged_chats_clean_mood_cleanData.jsonl"
+    ],
+    "unmatched_parts": []
+  },
+  "leak_check": {
+    "exact_examples_in_both": 0,
+    "val_long_replies": 94,
+    "val_long_replies_seen_in_train": 12,
+    "val_long_reply_overlap": 0.1277,
+    "val_short_replies": 188,
+    "val_short_replies_seen_in_train": 122,
+    "val_long_messages": 1090,
+    "val_long_messages_seen_in_train": 171,
+    "val_long_message_overlap": 0.1569,
+    "files_with_session_check": 2,
+    "sessions_in_both": 0
+  },
+  "val_files": [
+    {
+      "file": "merged_chats_clean_mood_cleanData.jsonl",
+      "examples": 43,
+      "bad_lines": 0,
+      "trained_replies": 43,
+      "trained_chars": 2630
+    },
+    {
+      "file": "synthetic_chats_100k_cleanData.jsonl",
+      "examples": 257,
+      "bad_lines": 0,
+      "trained_replies": 257,
+      "trained_chars": 5343
+    }
+  ],
+  "verdicts": [
+    {
+      "level": "WARNING",
+      "message": "12.8% of the long validation replies already appear somewhere in the training text (window mode repeats messages; a little is normal, a lot means validation is partly memorized)."
+    },
+    {
+      "level": "WARNING",
+      "message": "15.7% of the long validation messages also appear in training."
+    }
+  ]
+}
