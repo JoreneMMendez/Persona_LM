@@ -13,7 +13,7 @@ import math
 import numpy as np
 
 from .bpe import EOS, END
-from .generate import pick_token
+from .generate import REP_WINDOW, is_looping, pick_token
 from .model import _rms_fwd, _rope_tables, _softmax
 
 
@@ -80,10 +80,11 @@ def step(params, cfg, new_ids, cache):
 
 
 def sample_ids_cached(params, cfg, prompt_ids, max_new=100, temperature=0.8, top_k=40, top_p=0.95, seed=0, stop_ids=(EOS, END),
-                      should_stop=None, on_token=None):
+                      should_stop=None, on_token=None, rep_penalty=1.0, stop_repeat=False):
     """Same contract and same answers as generate.sample_ids, but with a KV cache. Returns only the newly generated ids.
     should_stop() (optional) is asked before every new token; True ends the reply early with what exists so far (the web UI's Stop button).
-    on_token(id) (optional) is told about each new token (the web UI shows the reply while it grows). Both default to off: nothing changes."""
+    on_token(id) (optional) is told about each new token (the web UI shows the reply while it grows). Both default to off: nothing changes.
+    rep_penalty and stop_repeat work exactly as in generate.sample_ids (off by default)."""
     rng = np.random.Generator(np.random.PCG64(seed))
     ids = list(prompt_ids)
     if not ids:
@@ -99,11 +100,13 @@ def sample_ids_cached(params, cfg, prompt_ids, max_new=100, temperature=0.8, top
             logits = step(params, cfg, window, cache)
         else:
             logits = step(params, cfg, [ids[-1]], cache)
-        nxt = pick_token(logits, rng, temperature, top_k, top_p)
+        nxt = pick_token(logits, rng, temperature, top_k, top_p, rep_penalty, ids[-REP_WINDOW:])
         if nxt in stop_ids:
             break
         ids.append(nxt)
         out.append(nxt)
         if on_token is not None:
             on_token(nxt)
+        if stop_repeat and is_looping(out):
+            return out[:len(out) - 2 * is_looping(out)]
     return out

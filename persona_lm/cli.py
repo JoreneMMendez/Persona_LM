@@ -26,7 +26,7 @@ from . import identity as ID
 from . import lineage as LIN
 from . import proposals as PRO
 from . import personas as PERS
-from .generate import complete, sample_ids
+from .generate import complete, sample_ids, REP_WINDOW, is_looping  # noqa: F401
 from .fastgen import sample_ids_cached
 from .gguf import export_model, params_from_gguf, read_gguf
 from .model import PRESETS, Config, forward, init_params, loss_and_grads, preset, zero_grads
@@ -225,9 +225,21 @@ def _load_model(a, chat=False):
     return got[0], Config.from_dict(got[2]["cfg"]), tok
 
 
+def _extra_sampling(a):
+    """The optional sampling flags, only when the owner set them (so a plain run behaves exactly as before)."""
+    kw = {}
+    if getattr(a, "top_p", None) is not None:
+        kw["top_p"] = a.top_p
+    if getattr(a, "rep_penalty", None) not in (None, 1.0):
+        kw["rep_penalty"] = a.rep_penalty
+    if getattr(a, "stop_repeat", False):
+        kw["stop_repeat"] = True
+    return kw
+
+
 def cmd_generate(a):
     params, cfg, tok = _load_model(a)
-    print(complete(params, cfg, tok, a.prompt, max_new=a.max_new, temperature=a.temperature, top_k=a.top_k, seed=a.seed))
+    print(complete(params, cfg, tok, a.prompt, max_new=a.max_new, temperature=a.temperature, top_k=a.top_k, seed=a.seed, **_extra_sampling(a)))
 
 
 def cmd_chat(a):
@@ -278,7 +290,7 @@ def cmd_chat(a):
         count = lambda text: len(tok.encode(text, allow_special=False))
         system, left_out = ID.system_line(core.sections, count, max(((cfg.ctx - a.max_new) // 2) - 4, 8))
     session = ChatSession(tok, cfg.ctx, lambda ids, **kw: sample_ids_cached(params, cfg, ids, **kw), system=system, save_dir=a.save_dir,
-                          settings={"max_new": a.max_new, "temperature": a.temperature, "top_k": a.top_k},
+                          settings={"max_new": a.max_new, "temperature": a.temperature, "top_k": a.top_k, **_extra_sampling(a)},
                           memory=store, memory_tokens=a.memory_tokens, mood=mood, tagger=tagger, person=card,
                           person_tokens=getattr(a, "person_tokens", None), identity=core, personas=personas, archive=archive,
                           proposals=PRO.Proposals(core, memory_path=getattr(a, "memory", None), person_path=getattr(a, "person", None)) if core is not None else None)
@@ -1008,6 +1020,9 @@ def build_parser():
             s.add_argument("--max-new", type=int, default=120)
             s.add_argument("--temperature", type=float, default=0.8)
             s.add_argument("--top-k", type=int, default=40)
+            s.add_argument("--top-p", type=float, default=None, help="keep only the most likely tokens whose chances add up to P (0 to 1). Not set = the built-in 0.95, as before")
+            s.add_argument("--rep-penalty", type=float, default=1.0, help="make words already used less likely; try 1.1 to 1.3. 1.0 = off (default)")
+            s.add_argument("--stop-repeat", action="store_true", help="end the reply when it starts repeating the same lines (off by default)")
         if name == "generate":
             s.add_argument("--prompt", required=True)
             s.add_argument("--seed", type=int, default=0)
