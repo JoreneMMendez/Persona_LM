@@ -3,6 +3,7 @@
 The model, tokenizer and training code are written from scratch with NumPy (Python 3.10+, `pip install numpy`). PyTorch is **optional**: install it only to train on a GPU (see `docs/GPU_GUIDE.md`). Without it everything still works on the CPU.
 
 **Project handoff / status for another AI or a new session: read `HANDOFF.md` (do not delete it).**
+**New here, or something broke? Read `docs/QUICKSTART.md`: the first 10 commands, a data-size guide and Windows troubleshooting.**
 Headless: command line only. Everything is written here: tokenizer, transformer with hand-written backprop, AdamW,
 training loop with exact resume, chat tuning, sampling, and a GGUF exporter so the finished model can run on the phone.
 
@@ -151,6 +152,10 @@ Chat page: pick a checkpoint + tokenizer (or an identity core), talk to it, Stop
 - Before every `train` run, `ckpt.npz` (and the tokenizer if you add `--tokenizer work\\tok.json`) is copied to `<run>\\backups\\<time>\\`. Turn off with `--no-backup`. Old backups are never deleted automatically.
 - `ckpt.best.npz` in the run folder = the weights at the lowest validation loss (chat with it: `--ckpt work3\\run_chat2\\ckpt.best.npz`). Turn off with `--save-best 0`.
 - `--early-stop 3` stops training after 3 validation checks in a row without improvement (default off).
+
+- `python -m persona_lm doctor --windows`: a self-check of THIS computer on made-up text in a temporary folder: tiny NumPy and PyTorch training runs, the console, the training panel, a menu form, the hybrid tests. Changes nothing.
+- `python -m persona_lm chat-probe --ckpt work3\\run_chat2\\ckpt.npz` (read-only): sends about 20 plain test messages and counts how many different replies come back, so you can see the "same stock reply to everything" problem as a number (`--show` prints the replies; several `--ckpt` compare runs).
+- `python -m persona_lm plan-steps --data-dir data_chat4096 --size s30m` (read-only): steps for about 3 passes over the data, warnings, and a ready `train` command with `--early-stop 3 --save-best 1`; `--from-run RUN` says where an earlier run peaked.
 
 - `python -m persona_lm data-audit --train data_clean\\train --val data_clean\\val --out data_audit --real merged_chats` (read-only, cleanup Stage 6): duplicate report, real vs synthetic ratio and a train/val leak check; the report goes to a NEW folder and contains no chat text.
 

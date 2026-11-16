@@ -3,6 +3,7 @@
   python -m persona_lm doctor                    # look in the current project folder (tokenizer work\\tok.json)
   python -m persona_lm doctor --root C:\\path     # another project folder
   python -m persona_lm doctor --deep             # also read every weight and look for NaN/inf (slower)
+  python -m persona_lm doctor --windows          # self-check of this computer: tiny training runs, console, panel, menu, hybrid tests
 
 It checks that the tokenizer loads, that every token folder and every checkpoint was made with THAT tokenizer and the same
 vocabulary size, that the files are complete, and how each run's validation loss went (overfitting).
@@ -189,9 +190,17 @@ def add_arguments(s):
     s.add_argument("--root", default=".", help="the project folder to look in (default: here)")
     s.add_argument("--tokenizer", default=None, help="the frozen tokenizer (default: work\\tok.json, else tok.json)")
     s.add_argument("--deep", action="store_true", help="also read all weights and look for NaN/inf (slower)")
+    s.add_argument("--windows", action="store_true", help="instead of the file checks: try tiny training runs, the training panel, a menu form and the hybrid tests on THIS computer (persona_lm/selfcheck.py)")
+    s.add_argument("--no-tests", action="store_true", help="(with --windows) do not run tests\\test_hybrid.py")
 
 
 def cmd(a):
+    if getattr(a, "windows", False):
+        from . import selfcheck
+        code = selfcheck.run(a.root, run_tests=not getattr(a, "no_tests", False))
+        if code:
+            raise SystemExit(code)
+        return
     code = run(a.root, a.tokenizer, a.deep)
     if code:
         raise SystemExit(code)

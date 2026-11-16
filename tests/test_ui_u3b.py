@@ -1,3 +1,4 @@
+import time
 """Stage U3b: the personas page routes (GET /api/personas, POST /api/personas/use) and the persona fields in the chat state."""
 import json
 import os
@@ -105,12 +106,15 @@ class Personas(ChatBase):
         self.post("/api/chat/load", self.core)
         hub = self.state.chat
         hub.send("hello")
-        hub.job.state = "running"
+        t0 = time.time()
+        while hub.job.state == "running" and time.time() - t0 < 10:
+            time.sleep(0.01)
+        old = hub.job
+        hub.job = type(old)(str(old.id) + 'x', old.tok)
         try:
             self.assertEqual(self.post("/api/personas/use", {"name": "joker"})[0], 409)
         finally:
             hub.job.state = "done"
-
     def test_typing_a_switch_in_the_chat_does_nothing(self):
         self.post("/api/chat/load", self.core)
         for text in ("/persona joker", "/persona none", "persona use joker"):

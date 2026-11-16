@@ -1024,6 +1024,16 @@ def build_parser():
     _doc.add_arguments(s)
     s.set_defaults(fn=_doc.cmd)
 
+    s = sub.add_parser("chat-probe", help="does the chat model answer the message, or give the same stock reply to everything? Sends ~20 test messages; prints numbers only unless --show (persona_lm/probe.py)")
+    from . import probe as _probe
+    _probe.add_arguments(s)
+    s.set_defaults(fn=_probe.cmd)
+
+    s = sub.add_parser("plan-steps", help="how many steps for about 3 passes over a token folder, warnings, and a ready train command with early stop; read-only (persona_lm/planner.py)")
+    from . import planner as _planner
+    _planner.add_arguments(s)
+    s.set_defaults(fn=_planner.cmd)
+
     for name, fn in (("generate", cmd_generate), ("chat", cmd_chat), ("export-gguf", cmd_export)):
         s = sub.add_parser(name)
         s.add_argument("--ckpt", required=name != "chat", default=None)
