@@ -1014,6 +1014,11 @@ def build_parser():
     s.add_argument("--no-backup", action="store_true", help="skip the automatic backup of ckpt.npz (and the tokenizer) into <run>\\backups\\ before training")
     s.set_defaults(fn=cmd_train)
 
+    s = sub.add_parser("data-audit", help="read-only: duplicate report, real vs synthetic ratio, train/val leak check of the cleaned chat files; the report goes to a NEW folder (persona_lm/datatools.py)")
+    from . import datatools as _dt
+    _dt.add_arguments(s)
+    s.set_defaults(fn=_dt.cmd)
+
     s = sub.add_parser("doctor", help="read-only health check: do tokenizer, token folders and checkpoints match, is a run overfitting? Says what to do (persona_lm/doctor.py)")
     from . import doctor as _doc
     _doc.add_arguments(s)

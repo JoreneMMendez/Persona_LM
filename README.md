@@ -152,6 +152,8 @@ Chat page: pick a checkpoint + tokenizer (or an identity core), talk to it, Stop
 - `ckpt.best.npz` in the run folder = the weights at the lowest validation loss (chat with it: `--ckpt work3\\run_chat2\\ckpt.best.npz`). Turn off with `--save-best 0`.
 - `--early-stop 3` stops training after 3 validation checks in a row without improvement (default off).
 
+- `python -m persona_lm data-audit --train data_clean\\train --val data_clean\\val --out data_audit --real merged_chats` (read-only, cleanup Stage 6): duplicate report, real vs synthetic ratio and a train/val leak check; the report goes to a NEW folder and contains no chat text.
+
 ## Data formats
 - Pretraining: `.txt`, `.md` (any folder of them), `.jsonl`/`.json` with strings or `{"text": "..."}`.
 - Chat: `{"messages": [{"role": "system|user|assistant", "content": "..."}]}`, or `{"prompt": ..., "reply": ...}`,
