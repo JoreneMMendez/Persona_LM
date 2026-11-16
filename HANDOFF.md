@@ -3,7 +3,13 @@
 **DO NOT DELETE THIS FILE.** It is the project's memory between sessions and between AIs. `tests/test_handoff.py` fails if it disappears or loses a section (keep the headings "START HERE", "5. Stage log", "7. Milestone plan", "12. Next action").
 Anything marked (unverified) was not checked on the owner's computer.
 
+## CURRENT FOCUS (read this first)
+The owner wants to work on the NEW CHANGES: the staged cleanup and improvements in the prompt at the end of this file ("Prompt for an AI to clean and improve the project"). Start with Stage 1 unless the owner says another stage. If the owner types just "stages" or "new changes", that means: continue the staged plan from the first stage that is not marked DONE below.
+Stage status: Stage 1 not done | Stage 2 not done | Stage 3 partly done (menu ignores non-tokenizer files, 2026-11-16) | Stage 4 not done | Stage 5 not done | Stage 6 not done | Stage 7 not done. (Update this line at the end of every stage.)
+
 ## START HERE
+- **CURRENT GOAL (owner, 2026-11-16): work on the cleanup/improvement STAGES 1 to 7 in the last section ("Prompt for an AI to clean and improve the project").** When a new session starts, do not ask what to do: continue with the next stage that is not done yet (see "Stage progress" below), do only that one stage, and finish it with the changed-files zip plus the PowerShell commands (copy files, run tests, `git add`, `commit`, `pull --rebase`, `push origin main`).
+- Stage progress (update after every stage): Stage 1 not done, Stage 2 not done, Stage 3 not done (the menu tokenizer fix is already in), Stage 4 not done, Stage 5 not done, Stage 6 not done, Stage 7 not done.
 - Owner: Jorene. Windows, PowerShell, project folder `C:\Users\user\persona_lm_project`. GPU: RTX 3050 6 GB laptop. PyTorch + CUDA, bf16.
 - What it is: tokenizer, transformer with hand-written backprop, AdamW, resumable training, chat tuning, sampling, GGUF export, local web UI. Personal chat AI trained on the owner's Messenger chats (Cebuano/Bisaya, Tagalog, English).
 - Run tests: `python -m unittest discover -s tests -v`. Commands are in README.md.
@@ -93,6 +99,7 @@ Anything marked (unverified) was not checked on the owner's computer.
 - What is `work\tok.seal.json`? It is not read by the project (see 2026-11-16 fix). Move it to `_to_delete\` if it is not needed.
 
 ## 12. Next action
+Do the next unfinished stage of the cleanup/improvement plan (START HERE, "CURRENT GOAL"), one stage per message. Then:
 Run `python cleanup_files.py` (dry run, then `--apply`). Chat with `work3\run_chat2` (command in section 8). Then gather more of the owner's own messages (milestone 2) and check `data_pre_new` tokens per parameter (milestone 3). Update sections 4 and 5 after each run.
 
 ## How to add more chats
