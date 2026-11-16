@@ -218,12 +218,12 @@ class Loop(unittest.TestCase):
             raise RuntimeError("boom")
         with tempfile.TemporaryDirectory() as d:
             asked = iter([""])
-            self.assertEqual(M.run_menu(d, stream=FakeTTY(), read=keys("5", "q"), ask=lambda q: next(asked), call=bad, width=100, color=False, interactive=True), 0)
+            self.assertEqual(M.run_menu(d, stream=FakeTTY(), read=keys(str(1 + [i["cmd"] for i in M.ITEMS].index("ui")), "q"), ask=lambda q: next(asked), call=bad, width=100, color=False, interactive=True), 0)
 
     def test_numbered_fallback_when_not_interactive(self):
         with tempfile.TemporaryDirectory() as d:
             calls = []
-            answers = iter(["7", "", "q"])                               # 7 = GPU check (no questions), Enter, then quit
+            answers = iter([str(1 + [i["cmd"] for i in M.ITEMS].index("check-gpu")), "", "q"])   # the GPU check (no questions), Enter, then quit
             M.run_menu(d, stream=io.StringIO(), ask=lambda q: next(answers), call=calls.append, interactive=False)
             self.assertEqual(calls, [["check-gpu"]])
 

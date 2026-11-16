@@ -42,6 +42,8 @@ python -m persona_lm export-gguf --ckpt runs/chat/ckpt.npz --tokenizer tok.json 
 Sizes: `tiny` (0.1M, for testing), `s10m` and `s30m` (context 4096, about 150 chat messages; models trained earlier keep their 512), `s125m` (parameter counts exclude the vocabulary; the benchmark prints the total).
 Training must use the same `--size` for pretraining and chat tuning.
 
+In the menu (`python -m persona_lm`), **Fine-tune a model (chat tuning)** does the chat tuning step for you: it asks for the pretrained base model, a NEW run folder (`run_chat<n>`, suggested), the chat token folder and the size, then shows the gentle settings (lr 1e-4, 3000 steps) before it starts. It runs the same `train --init-from` command as above.
+
 ## Your Messenger data (Stage 2; see docs/MESSENGER_GUIDE.md)
 ```bash
 python -m persona_lm messenger-scan EXPORT_FOLDER --me "Your Name"                          # list the chats (read-only)

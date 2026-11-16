@@ -11,6 +11,7 @@ import contextlib
 import importlib.util
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -107,9 +108,9 @@ def _find_run(found, answer):
 
 
 # ------------------------------------------------------------------ the items and what each one asks
-def _field(key, ask, flag=None, default=None, required=False, choices=None, hint=None, check=None, switch=False):
+def _field(key, ask, flag=None, default=None, required=False, choices=None, hint=None, check=None, switch=False, help=None):
     """check(value) -> an error text or None (checked before the answer is accepted); switch=True: the flag takes no value (answer yes -> flag added)."""
-    return dict(key=key, ask=ask, flag=flag, default=default or (lambda a, f: ""), required=required, choices=choices, hint=hint, check=check, switch=switch)
+    return dict(key=key, ask=ask, flag=flag, default=default or (lambda a, f: ""), required=required, choices=choices, hint=hint, check=check, switch=switch, help=help)
 
 
 def _d_run(a, f):
@@ -132,6 +133,61 @@ def _d_chat_ckpt(a, f):
         if "chat" in os.path.basename(os.path.normpath(r["path"])).lower():
             return os.path.join(r["path"], "ckpt.npz")
     return _d_ckpt(a, f)
+
+
+def _is_base_name(path):
+    name = os.path.basename(os.path.normpath(path)).lower()
+    return "pre" in name and "chat" not in name
+
+
+def _d_ft_init(a, f):
+    """Fine-tuning starts from a pretrained BASE model: the newest run whose folder name has 'pre' (not 'chat')."""
+    for r in f["runs"]:
+        if _is_base_name(r["path"]):
+            return os.path.join(r["path"], "ckpt.npz")
+    return _d_ckpt(a, f)
+
+
+def _d_ft_run(a, f):
+    """A NEW folder next to the base run: run_chat<n>, one more than the highest run_chat<n> already there."""
+    init = a.get("init") or ""
+    folder = os.path.dirname(os.path.dirname(init)) if init else ""
+    scan_dir = folder or "."
+    top = 0
+    try:
+        for name in os.listdir(scan_dir):
+            m = re.fullmatch(r"run_chat(\d+)", name.lower())
+            if m:
+                top = max(top, int(m.group(1)))
+    except OSError:
+        pass
+    return os.path.join(folder, "run_chat%d" % (top + 1)) if folder else "run_chat%d" % (top + 1)
+
+
+def _d_ft_data(a, f):
+    """The newest token folder whose name says chat; otherwise the newest token folder."""
+    for d in f["data"]:
+        if "chat" in os.path.basename(os.path.normpath(d)).lower():
+            return d
+    return _d_data(a, f)
+
+
+def _d_ft_size(a, f):
+    init = a.get("init") or ""
+    r = _find_run(f, os.path.dirname(init)) if init else None
+    return r["size"] if r and r["size"] not in (None, "?") else _d_size({}, f)
+
+
+def _check_base_ckpt(val):
+    if os.path.isfile(val) or os.path.isfile(val.replace(".npz", ".prev.npz")):
+        return None
+    return "no such file. Give the ckpt.npz of the pretrained base run, e.g. work3\\run_pre\\ckpt.npz"
+
+
+def _check_new_run(val):
+    if os.path.isfile(os.path.join(val, "ckpt.npz")):
+        return "that run already exists, so this would CONTINUE it instead of starting a fine-tune. Type a new folder name"
+    return None
 
 
 def _d_data(a, f):
@@ -250,11 +306,12 @@ def _parse(text, kind):
     return kind(float(text.replace(",", "").replace("_", ""))) if kind is int else float(text.replace(",", ""))
 
 
-def edit_settings(base, ctx, step, ask=input, say=print):
+def edit_settings(base, ctx, step, ask=input, say=print, start=None):
     """Shows the training settings with plain-words help and lets the person change any of them before the run starts.
     `base` = the values the run uses now (saved in the run, or the defaults for a new one); `ctx` = tokens per sequence; `step` = where
     a resumed run is (0 for a new one). Returns only the settings that were CHANGED, as {name: value}."""
-    cur = dict(base)
+    begin = dict(base, **(start or {}))                  # a new fine-tune begins on the gentle chat-tuning numbers
+    cur = dict(begin)
     n = len(SETTINGS)
     say("\n  Training settings")
     say("  These are the numbers training will use. Press Enter to keep them all, or type a number to see what a setting does and change it.")
@@ -276,7 +333,7 @@ def edit_settings(base, ctx, step, ask=input, say=print):
         if not k:
             break
         if k == "r":
-            cur = dict(base)
+            cur = dict(begin)
         elif k == "p":
             say("")
             for j, (name, vals, why) in enumerate(QUICK, 1):
@@ -333,6 +390,16 @@ ITEMS = [
     dict(label="Chat with a model", cmd="chat", desc="Talk to a trained model in this window. Starts with the newest chat-tuned run (run_chat*); a base run (run_pre) cannot chat.",
          fields=[_field("ckpt", "Checkpoint", "--ckpt", _d_chat_ckpt, True), _field("tok", "Tokenizer", "--tokenizer", _d_tok, True),
                  _field("system", "System prompt", "--system")]),
+    dict(label="Fine-tune a model (chat tuning)", cmd="train", settings=True, preset=dict(lr=1e-4, min_lr=1e-5, warmup=50, steps=3000),
+         desc="Teach a pretrained base model to chat: starts a NEW run from the base model's weights on your chat token folder, with gentle settings you can review (lr 1e-4, 3000 steps).",
+         fields=[_field("init", "Base model to start from", "--init-from", _d_ft_init, True, check=_check_base_ckpt,
+                        help="the ckpt.npz of the pretrained BASE run (folder name like run_pre). Its weights are copied; the base run is not changed"),
+                 _field("run", "New run folder", "--run", _d_ft_run, True, check=_check_new_run,
+                        help="where the fine-tuned model is saved. It must be a NEW folder (run_chat1, run_chat2, ...)"),
+                 _field("data", "Chat token folder", "--data-dir", _d_ft_data, True,
+                        help="the token files made with `prepare --kind chat` (or Language data -> token files). Pick the chat folder, not the pretraining one"),
+                 _field("size", "Model size", "--size", _d_ft_size, True, SIZES,
+                        help="must be the same size as the base model")]),
     dict(label="Generate text", cmd="generate", desc="Continue a prompt with a model, once, and print it.",
          fields=[_field("ckpt", "Checkpoint", "--ckpt", _d_ckpt, True), _field("tok", "Tokenizer", "--tokenizer", _d_tok, True),
                  _field("prompt", "Prompt", "--prompt", None, True)]),
@@ -423,7 +490,13 @@ class Menu(Skin):
                 rows.append(self.c(fit("%s %s  %s" % (self.ptr, key, it["label"]), li), "30;46"))
             else:
                 rows.append("  " + self.c(key, "90") + "  " + it["label"])
-        big = rows + ([""] if len(rows) + 2 <= PANEL_H - 2 else []) + [self.c("up/down move  Enter select  q quit" if not self.unicode else "↑↓ move   Enter select   q quit", "90")]
+        hint = "up/down move  Enter select  q quit" if not self.unicode else "↑↓ move   Enter select   q quit"
+        if len(rows) > PANEL_H - 2:                                  # more items than rows: the list scrolls with the selection
+            vis = PANEL_H - 3
+            start = min(max(sel - vis // 2, 0), len(rows) - vis)
+            big = rows[start:start + vis] + [self.c("%s  %d/%d" % (hint, sel + 1, len(rows)), "90")]
+        else:
+            big = rows + ([""] if len(rows) + 2 <= PANEL_H - 2 else []) + [self.c(hint, "90")]
 
         it = ITEMS[sel]
         words = textwrap.wrap(it["desc"], ri)[:3]
@@ -709,7 +782,7 @@ class Form(Live):
 
         if self.focus < n:
             f = self.fields[self.focus]
-            help_ = textwrap.wrap(HELP.get(f["key"], ""), W - 4)[:3]
+            help_ = textwrap.wrap((f.get("help") or HELP.get(f["key"], "")), W - 4)[:3]
             info = "Tip: type to replace the shown answer, Right arrow to edit it." if not f["choices"] and self.fresh[self.focus] and self.val[self.focus] else \
                    ("Left / Right or Space to choose." if f["choices"] else "")
         else:
@@ -786,7 +859,7 @@ def form_collect(item, found, out, color, width, read_edit, ask=input, say=print
     if item.get("settings"):
         try:
             base, ctx, step = settings_base(found, form.answers())
-            for k, v in edit_settings(base, ctx, step, ask, say).items():
+            for k, v in edit_settings(base, ctx, step, ask, say, start=None if step else item.get("preset")).items():
                 argv += ["--" + k.replace("_", "-"), str(v)]
         except (KeyboardInterrupt, EOFError):
             say("")
@@ -824,7 +897,7 @@ def collect(item, found, ask=input, say=print):
             note = "[%s]" % default if default else ("[%s]" % hint if hint else ("" if f["required"] else "(optional, Enter to skip)"))
             if f["choices"]:
                 note += " choices: %s" % "/".join(f["choices"])
-            say("\n  %d/%d  %s: %s" % (i, n, f["ask"], HELP.get(f["key"], "")))
+            say("\n  %d/%d  %s: %s" % (i, n, f["ask"], (f.get("help") or HELP.get(f["key"], ""))))
             while True:
                 val = ask("       %s > " % note if note else "       > ").strip().strip('"').strip()
                 val = val or default
@@ -848,7 +921,7 @@ def collect(item, found, ask=input, say=print):
                 argv += [f["flag"], val] if f["flag"] else [val]
         if item.get("settings"):
             base, ctx, step = settings_base(found, answers)
-            for k, v in edit_settings(base, ctx, step, ask, say).items():
+            for k, v in edit_settings(base, ctx, step, ask, say, start=None if step else item.get("preset")).items():
                 argv += ["--" + k.replace("_", "-"), str(v)]
     except (KeyboardInterrupt, EOFError):
         say("")
