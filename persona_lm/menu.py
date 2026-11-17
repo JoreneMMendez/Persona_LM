@@ -21,6 +21,7 @@ import textwrap
 from .pretty import MAX_W, MIN_WIDTH, PANEL_H, Skin, enable_vt, fit
 from .model import PRESETS
 from .train import DEFAULT_HP
+from .menu_text import ITEM_TEXT
 
 SKIP_DIRS = {".git", "__pycache__", "node_modules", "venv", ".venv", "site-packages", "private", "tests", "docs"}
 SIZES = sorted(PRESETS, key=lambda k: PRESETS[k]["d_model"])
@@ -421,6 +422,11 @@ ITEMS = [
     dict(label="Quit", cmd=None, desc="Leave the menu.", fields=[]),
 ]
 QUIT = len(ITEMS) - 1
+
+
+def plain_text(item):
+    # plain-words record (title, what, when, need, result, time, safe) of a menu item
+    return ITEM_TEXT[item["label"]]
 
 
 # ------------------------------------------------------------------ keys

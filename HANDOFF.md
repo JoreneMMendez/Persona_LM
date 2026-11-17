@@ -4,12 +4,110 @@
 Anything marked (unverified) was not checked on the owner's computer.
 
 ## CURRENT FOCUS (read this first)
-The owner wants to work on the NEW CHANGES: the staged cleanup and improvements in the prompt at the end of this file ("Prompt for an AI to clean and improve the project"). Start with Stage 1 unless the owner says another stage. If the owner types just "stages" or "new changes", that means: continue the staged plan from the first stage that is not marked DONE below.
-Stage status: Stage 1 DONE (audit) | Stage 2 DONE (safe cleanup, 2026-11-16) | Stage 3 DONE (2026-11-16) | Stage 4 DONE (2026-11-16) | Stage 5 DONE (2026-11-16) | Stage 6 DONE (2026-11-16) | Stage 7 DONE (2026-11-16: owner chose P1, P2, P6, P8; P3, P4, P5, P7 not chosen). (Update this line at the end of every stage.)
+The owner's NEW request (2026-11-17): rework the terminal menu so people with no technical background can use it. The plan is written as a prompt with 7 stages (T1 to T7) in the next section. **The prompt comes first and NOTHING is built until the owner types `build T<n>`.** The older cleanup stages 1 to 7 are all DONE (history is kept at the end of this file).
+If the owner types just "stages" or "status": print the stage status line below and build nothing. Only the exact words `build T<n>` start work, one stage at a time, in order.
+Terminal UI stage status: T1 DONE | T2 not started | T3 not started | T4 not started | T5 not started | T6 not started | T7 not started. (Update this line at the end of every stage.)
+Old cleanup stages (history): Stage 1 to 7 DONE (2026-11-16; owner chose P1, P2, P6, P8 in Stage 7).
+
+## TERMINAL UI REWORK: PROMPT FIRST, BUILD ONLY ON COMMAND (owner request, 2026-11-17)
+**Status: T1 is built (text bank only). T2 to T7 are NOT built.** Stage status: T1 DONE | T2 not started | T3 not started | T4 not started | T5 not started | T6 not started | T7 not started. (Update this line at the end of every stage.)
+What the owner wants: the terminal menu (`python -m persona_lm menu`) reworked so a person with NO technical background can use it. Every section says what it does, in plain words. Built in 7 small stages, and only when the owner types `build T1`, `build T2`, and so on.
+How to use: (1) open a new AI session with the project zip + this file, (2) paste the prompt below ONCE, (3) the AI answers only "Ready", (4) type `build T1`; when it is delivered and tested, type `build T2`; and so on. Nothing is built without the words `build T<n>`.
+
+````text
+You are continuing Persona_LM (zip + HANDOFF.md attached). The job: rework the terminal menu so a non-technical person can operate it. The plan below has 7 stages, T1 to T7.
+
+## BUILD GATE (rule 0, above everything else)
+- Until I type exactly "build T<n>" (n = 1 to 7), do NOT read project files, edit, create, run anything, or plan in detail. Answer with ONE line: "Ready. Say 'build T1'." (use the first stage not marked DONE).
+- "build T<n>" = build only that stage, then stop. If an earlier stage is not DONE, answer in one line ("T3 needs T2 first. Say 'build T2'.") and do nothing else.
+- "stages" or "status" = print the stage status line from HANDOFF.md, build nothing. Words like "continue" or "go on" are NOT a build command.
+- A question about a stage ("what will T4 do?") = answer in 5 lines or less from the stage text below, without reading files.
+
+## READER AND PLAIN-WORDS STANDARD (applies to all text you write)
+- The reader is a smart adult who has never used a terminal. No jargon without a plain explanation: say "model file" (not checkpoint), "prepared text files" (not token files), "test score, lower is better" (not val loss). Keep the technical name visible but grey and second, e.g. "Teach the AI (train)", so docs still match.
+- Every screen answers four questions: What is this? What happens if I pick it? What do I need first? What do I get, and where is it saved?
+- Sentences of 18 words or less. Lines wrap to the terminal width (design for 60 columns). Say what is safe: "This does not change your chats or your models."
+- Every error says what went wrong, why, and what to do next. No tracebacks (PERSONA_DEBUG=1 may still show one).
+
+## HARD RULES (all rules in HANDOFF.md "HARD RULES" still apply, plus these)
+1. Do not change what any menu item runs: command names, flags, `build_argv`, checkpoint format, tokenizer format, `work\tok.json`. This is a TEXT and SCREEN rework only.
+2. Keep the keys `label`, `cmd`, `fields`, `settings`, `preset` of every ITEMS entry, and keep the ITEMS list ORDER (tests use ITEMS[0] = train, ITEMS[1] = chat, ITEMS[QUIT] = quit). Show a different order only through a separate display order, and map the number keys to it.
+3. Windows console must still work: ASCII fallback (Skin unicode_ok), NO_COLOR, `--plain`, and the numbered fallback menu (no boxes) must show the same plain text.
+4. Never print or read the owner's chats. The menu may look only at file NAMES and sizes (scan()), as it does now.
+5. All existing tests must pass. If a test pins a string you intentionally renamed, change only that expected string and list the test in your summary. Never skip or delete tests.
+6. Do not push or merge. The owner runs the commands.
+
+## TOKEN-EFFICIENCY BUILD RULES (follow all of them)
+A. Reading
+ 1. Never read HANDOFF.md fully. Read only CURRENT FOCUS, START HERE, and the stage you are building (grep -n for the heading, then sed -n for those lines).
+ 2. Never open a big file whole: menu.py (about 1070 lines), cli.py (about 1360), pretty.py (about 300). Get an outline with `grep -n "^def \|^class " FILE`, then `sed -n A,Bp FILE` for ONLY the functions named in the stage's "Read" line. Read each piece once and remember it.
+ 3. Never read tests whole (grep the name of the test, or just run it). Never open data, model or work folders, ui_static, or docs that the stage does not list.
+ 4. At most 8 read commands before your first edit. If you need more, you are reading the wrong place: use grep instead.
+B. Writing
+ 5. All plain-language text lives in ONE data file, `persona_lm/menu_text.py` (plain dicts and strings, no logic), created in T1. Later stages add strings there with small edits, so text changes never touch logic code.
+ 6. Edit with small targeted str_replace. Never rewrite or re-print a whole file. Do not reformat old code or rename functions. Create a new file in ONE call, no drafts, no placeholders.
+ 7. One short comment line per new function at most.
+C. Testing
+ 8. Order: tests for the new text first (tests/test_menu_text.py, created in T1, grown each stage), then code. Run ONLY the affected files while working: tests/test_menu.py, tests/test_menu_finetune.py, tests/test_menu_text.py (+ tests/test_pretty.py if pretty.py changed, tests/test_corpus_ui.py if corpus_ui.py changed). ONE full-suite run at the very end of the stage.
+ 9. Run quietly: `python -m unittest FILE 2>&1 | tail -15`. Never use -v on the full suite. On a failure read only the failing assertion, fix it, rerun that one file. After 3 failed repairs of the same thing, undo that edit and report it.
+ 10. No visual checking loops. Instead, render each new screen ONCE into a StringIO at widths 60 and 80 inside a test and assert: no line wider than the width, every text key exists, no UnicodeEncodeError on a cp1252 stream (see StrictStream in persona_lm/selfcheck.py), no jargon word that is missing from the glossary.
+D. Replies
+ 11. One status line at the start ("Building T<n>: <3 words>"), no narration while working. Final reply: 15 lines or less plus the delivery block. Never paste code, file contents or test logs.
+ 12. Do not ask questions unless blocked. Use the defaults in the stage, and state your assumptions in ONE line.
+ 13. No extra features, no polish pass, no re-checking finished work. Ideas go in ONE "Later ideas" line.
+E. Credit protection
+ 14. A stage should touch 4 files or fewer and change about 300 lines or fewer (mostly text). If it is bigger, build the first working part, tick only that part, list what is left, and stop.
+ 15. If credit seems low: stop, finish what already works, deliver now. Never leave half-written files or failing tests.
+ 16. At the end of the stage update HANDOFF.md: the stage status line (CURRENT FOCUS and this section), at most 12 lines in the Stage log (section 5), and section 12. Put HANDOFF.md in the zip.
+
+## THE 7 STAGES
+T1 Plain-words text bank (no screen changes yet)
+ Read: menu.py ITEMS (about lines 386-423), HELP and SETTINGS (about 219-300). Files: NEW persona_lm/menu_text.py, NEW tests/test_menu_text.py, a small hook in menu.py.
+ Build: for every ITEMS entry a record with: title (plain name), what (1-2 sentences), when (when to use it), need (what must exist first), result (what you get and where it is saved), time (rough time), safe (what it does NOT change). A GLOSSARY (model file, tokenizer, prepared text files, run, base model, fine-tune, test score/overfitting, batch/accum, learning speed, GPU/CPU/torch, recipe, ...), one plain sentence each. FRIENDLY_ERRORS: pattern -> 3-part message (what happened / why / what to do) for out of memory, missing file or folder, wrong tokenizer, torch not installed, disk full, no internet, stopped by Ctrl+C.
+ Done when: tests prove every ITEMS entry has every key, sentences are 18 words or less, every glossary term used in the text is defined, and old tests still pass.
+
+T2 Main menu screen
+ Read: Menu.header/render/select, _fallback, scan() found keys. Files: menu.py, menu_text.py, tests/test_menu.py (+ test_menu_finetune.py only if a pinned string changed).
+ Build: group the list under headings: START HERE, TALK TO YOUR AI, TEACH YOUR AI, PREPARE DATA, CHECKS AND TOOLS, then Quit. Show the plain title with the technical name in grey. The Details panel shows What it does / When to use / You need / You get / Time / Safe. The Project panel becomes "Your project" with ready-checks in words ("Your AI model: ready / none yet", "Prepared chat data: ...", "Graphics card: found / not found, training will be slow") and ONE "Next suggestion" line made from scan(). The numbered fallback shows the group headings and one plain line per item.
+ Done when: both screens render at width 60 and 80 with no overflow, number keys still pick the item shown, old tests pass.
+
+T3 Question forms
+ Read: Form.lines/key/problem, collect, _field and the _d_* defaults. Files: menu.py, menu_text.py, tests.
+ Build: every question gets a plain label, a one-line help under the highlighted row, an example, and an explained default ("Enter = newest run: run_chat3"). "?" shows the longer help. Problems are plain ("That folder already exists. Pick a new name like run_chat4, or it will continue the old run."). Footer in words: "* = you must answer, Esc = go back". The typed-line fallback (collect) prints the same help.
+ Done when: every field of every item has label, help and example in menu_text.py (test), forms render at width 60.
+
+T4 Confirmation and settings screens
+ Read: Confirm, confirm_box, confirm_train, confirm_corpus, _train_lines, _corpus_lines, edit_settings, SETTINGS. Files: menu.py, menu_text.py, tests.
+ Build: a "You are about to ..." box in plain words: what will happen, what will be created (folder names), what will NOT be changed, time and disk estimate ONLY where the code already has the numbers (else "unknown until it starts"). The exact command goes last under "Technical command (for experts)". Default answer is No for long actions. Rewrite SETTINGS what/up/down/tip in plain words (18 words or less each) and add three named presets with one plain line each: "Safe (recommended)", "Gentle chat tuning", "Stop it memorizing". Warnings in words ("more than about 4 passes over the data makes it memorize").
+ Done when: no setting text uses a term missing from the glossary (test), confirm screens fit width 60.
+
+T5 Guided setup (new item "Start here: step by step")
+ Read: scan() and run_menu loop. Files: menu.py, menu_text.py, tests.
+ Build: ONE new ITEMS entry placed just before Quit in the list (never at index 0 or 1) but shown FIRST by the display order. It shows a checklist with DONE / NEXT / LATER per step: 1 check this computer, 2 get language data, 3 make prepared text files, 4 teach the AI, 5 try it (chat), 6 chat for real. The state comes only from scan(). Pick a step to open the matching existing menu item. A step that is not a menu item (adding the owner's Messenger chats, clean_data.py) shows the exact command in a copy-ready box with one plain sentence; the menu never reads the Messenger export.
+ Done when: tests cover the state of the checklist for an empty folder, a folder with data only, and a folder with a trained run.
+
+T6 Live screens, results, errors, help
+ Read: TrainDisplay labels in pretty.py, the except blocks in run_menu and in cli.main (message text only), the Press-Enter step. Files: pretty.py, menu.py, cli.py (error text only), menu_text.py, tests.
+ Build: training panel labels in plain words ("Test score, lower is better", "Learning speed", "Time left", the overfitting warning in a sentence); `--plain` output unchanged in structure. After every command a "What happened / What to do next" box (finished, failed, or stopped with Ctrl+C: "Safe to stop. Choose the same item again to continue."). FRIENDLY_ERRORS used in the menu and in cli.main (PERSONA_DEBUG=1 still shows the traceback). New key "?" or "h" in the menu = a Help page: the glossary, the keys, "if you are stuck", and where your files are.
+ Done when: tests for each friendly error, test_pretty.py passes (change only intentionally renamed strings).
+
+T7 Check, Windows safety, docs
+ Read: selfcheck.py (the menu/panel check only), README.md menu part, docs/QUICKSTART.md headings. Files: tests/test_menu_text.py, selfcheck.py (only if a menu check already exists there), README.md, docs/QUICKSTART.md.
+ Build: a sweep test that renders EVERY screen at widths 60, 80, 100, with NO_COLOR, with a cp1252 StrictStream and in the numbered fallback (no overflow, no UnicodeEncodeError, reading level: average sentence 18 words or less). A short "Use the menu (no typing commands)" section in README.md and QUICKSTART.md. An 8-line "try it on your PC" checklist for the owner. Mark the real Windows console look as UNVERIFIED until the owner confirms.
+ Done when: the full suite passes and the owner has the checklist.
+
+## DELIVERY (end of EVERY stage, nothing else first)
+1. One zip with only the changed files: STAGE_T<n>_files.zip (include HANDOFF.md).
+2. A 3-line summary: what changed, test result, what you did NOT touch.
+3. The PowerShell commands as a NUMBERED list of SINGLE lines, in C:\Users\user\persona_lm_project. Under each one a plain sentence: what it does and what I should see. Order: unzip over the project, run the tests, `git status`, `git checkout main`, `git add <each changed file>` (never `git add .`), `git commit -m "..."`, `git pull --rebase origin main`, `git push origin main`. Before the push tell me to run `git ls-files` and check that no chats, .jsonl, .npz, .bin, work* or private/ files are tracked.
+4. One line: "Try it: python -m persona_lm menu" and what I should look for.
+
+Now answer only: "Ready. Say 'build T1'."
+````
 
 ## START HERE
-- **CURRENT GOAL (owner, 2026-11-16): work on the cleanup/improvement STAGES 1 to 7 in the last section ("Prompt for an AI to clean and improve the project").** When a new session starts, do not ask what to do: continue with the next stage that is not done yet (see "Stage progress" below), do only that one stage, and finish it with the changed-files zip plus the PowerShell commands (copy files, run tests, `git add`, `commit`, `pull --rebase`, `push origin main`).
-- Stage progress (update after every stage): Stage 1 DONE, Stage 2 DONE, Stage 3 DONE, Stage 4 DONE, Stage 5 DONE, Stage 6 DONE, Stage 7 DONE (P1, P2, P6, P8 built; P3 tokens-per-parameter report, P4 window-mode repeat reducer, P5 memory/mood fine-tune data, P7 GGUF test kit were offered and NOT chosen).
+- **CURRENT GOAL (owner, 2026-11-17): the terminal UI rework, stages T1 to T7 (section "TERMINAL UI REWORK" above). The prompt is written; build ONLY when the owner types `build T<n>`.** Do not start a stage on your own, and do not ask what to build: answer "Ready. Say 'build T2'." (or the next stage that is not DONE). When a stage is built, do only that stage and finish it with the changed-files zip plus numbered single-line PowerShell commands.
+- Old cleanup plan (stages 1 to 7, 2026-11-16): all DONE (P1, P2, P6, P8 built; P3 tokens-per-parameter report, P4 window-mode repeat reducer, P5 memory/mood fine-tune data, P7 GGUF test kit were offered and NOT chosen).
 - Owner: Jorene. Windows, PowerShell, project folder `C:\Users\user\persona_lm_project`. GPU: RTX 3050 6 GB laptop. PyTorch + CUDA, bf16.
 - What it is: tokenizer, transformer with hand-written backprop, AdamW, resumable training, chat tuning, sampling, GGUF export, local web UI. Personal chat AI trained on the owner's Messenger chats (Cebuano/Bisaya, Tagalog, English).
 - Run tests: `python -m unittest discover -s tests -v`. Commands are in README.md.
@@ -61,6 +159,10 @@ Stage status: Stage 1 DONE (audit) | Stage 2 DONE (safe cleanup, 2026-11-16) | S
 - 2026-11-16: fixed `KeyError: 'merges'` in the menu: it picked `work\tok.seal.json` (not a tokenizer) because it took the newest `tok*.json`. `menu.py` now lists only real tokenizers (with `merges` and `specials`) and puts `tok.json` first; `bpe.py` `Tokenizer.load` gives a clear error for a wrong file.
 - Tests: about 870 (some skipped without PyTorch).
 
+- 2026-11-17: owner asked for a terminal UI rework for non-technical users. Only the PROMPT was written (section "TERMINAL UI REWORK", 7 stages T1 to T7, build gate, token-efficiency build rules, delivery format). No code changed. T1 to T7: not started.
+- T1 (2026-11-17) DONE: plain-words text bank. NEW `persona_lm/menu_text.py` (data only): ITEM_TEXT (keyed by the ITEMS `label`; keys title, what, when, need, result, time, safe) for all 12 items, GLOSSARY (24 terms, one sentence each), FRIENDLY_ERRORS (7 entries: pattern, what happened, why, what to do: out of memory, missing file, wrong tokenizer, torch missing, disk full, no internet, Ctrl+C), JARGON (words that must be in the glossary). `menu.py`: one import and `plain_text(item)`; ITEMS untouched, no screen changed. NEW `tests/test_menu_text.py` (7 tests: every item has every key, no orphan records, sentences of 18 words or less, jargon is defined, planned glossary terms, errors match real error texts, cp1252-safe). Later stages add strings to menu_text.py.
+  Not done in T1 (by plan): screens, grouping, forms, confirm boxes, help page. Times in `time` are rough words, not measured (unverified).
+
 ## 6. Known problems
 - Chat quality is limited by the small model and little personal data (sections 3 and 4).
 - Tests that need PyTorch (`tests/test_hybrid.py`, 4 checks) were skipped when written: the CPU+GPU hybrid training code is UNTESTED on real hardware until the owner runs `python -m unittest tests.test_hybrid -v` and a real `--cpu-share auto` run.
@@ -102,6 +204,7 @@ Stage status: Stage 1 DONE (audit) | Stage 2 DONE (safe cleanup, 2026-11-16) | S
 - `work\tok.seal.json` is written and read by `python -m persona_lm tok-check` (it records the frozen tokenizer's fingerprint). It is not a tokenizer; keep it (the menu already ignores it).
 
 ## 12. Next action
+FIRST: the terminal UI rework. The prompt is in the section "TERMINAL UI REWORK" near the top. T1 is DONE. Wait for the owner to type `build T2` (then T3 ... T7, in order). The items below are the older to-do list and stay valid.
 All 7 cleanup stages are DONE. Stage 7 delivered P1, P2, P6 and P8 (see the Stage 7 log). Next, on the owner's computer: run `python -m persona_lm doctor --windows` (the torch/hybrid/panel/menu parts have not run on real Windows hardware yet), `chat-probe` on `run_chat2` and `run_chat3`, and `plan-steps` before the next chat run. Open proposals if the owner wants them: P3, P4, P5, P7. Then:
 Run `python cleanup_files.py` (dry run, then `--apply`). Chat with `work3\run_chat2` (command in section 8). Then gather more of the owner's own messages (milestone 2) and check `data_pre_new` tokens per parameter (milestone 3). Update sections 4 and 5 after each run.
 
@@ -119,6 +222,7 @@ Do not merge anything; each file stays its own file.
 5. Chat text is private: never print or upload `data_clean`, `data_chat` or the input files. Leave `clean_data.py --show-top` off.
 
 ## Prompt for an AI to clean and improve the project
+(HISTORY: all 7 cleanup stages below are DONE. The active prompt is "TERMINAL UI REWORK" near the top of this file.)
 Give this to an AI coding tool with the project folder open. It works in STAGES so that credit never runs out before the files reach the owner. Paste the whole prompt once, then say "do stage 1", later "do stage 2", and so on.
 
 ```
