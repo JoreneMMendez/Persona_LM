@@ -251,7 +251,7 @@ class LanguageData(unittest.TestCase):
         said, answers = [], iter(["french", "en", "", ""])
         argv = M.collect(self.item(), {}, ask=lambda q: next(answers), say=said.append)
         self.assertEqual(argv[:3], ["corpus", "--lang", "en"])
-        self.assertTrue(any("choose at least one of" in x for x in said))
+        self.assertTrue(any("separated by commas" in x for x in said))
 
     def test_taglish_needs_a_typed_yes(self):
         said = []
@@ -339,8 +339,8 @@ class Forms(unittest.TestCase):
         self.drive(f, *"french")
         self.drive(f, "enter")
         self.assertEqual(f.focus, 0)
-        self.assertIn("choose at least one of", f.msg)
-        self.assertIn("choose at least one of", "\n".join(f.lines()))
+        self.assertIn("separated by commas", f.msg)
+        self.assertIn("separated by commas", "\n".join(f.lines()))
         self.drive(f, "clear", *"ceb")
         self.drive(f, "enter")
         self.assertEqual(f.focus, 1)

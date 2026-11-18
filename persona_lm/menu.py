@@ -21,7 +21,7 @@ import textwrap
 from .pretty import MAX_W, MIN_WIDTH, Skin, enable_vt, fit
 from .model import PRESETS
 from .train import DEFAULT_HP
-from .menu_text import DETAIL_FIELDS, GROUPS, ITEM_TEXT, NEXT, SCREEN, TECH_NAMES
+from .menu_text import DETAIL_FIELDS, FIELD_TEXT, FORM, GROUPS, ITEM_TEXT, NEXT, PROBLEMS, SCREEN, TECH_NAMES
 
 SKIP_DIRS = {".git", "__pycache__", "node_modules", "venv", ".venv", "site-packages", "private", "tests", "docs"}
 SIZES = sorted(PRESETS, key=lambda k: PRESETS[k]["d_model"])
@@ -125,7 +125,7 @@ def _d_ckpt(a, f):
 def _check_recipe_id(val):
     """Error text if the typed recipe id cannot be a recipe id, else None."""
     from .hfdata import ID_RE
-    return None if ID_RE.match(val) else "a recipe id is 1-40 lowercase letters, digits, - or _"
+    return None if ID_RE.match(val) else PROBLEMS["recipe_id"]
 
 
 def _d_chat_ckpt(a, f):
@@ -182,12 +182,12 @@ def _d_ft_size(a, f):
 def _check_base_ckpt(val):
     if os.path.isfile(val) or os.path.isfile(val.replace(".npz", ".prev.npz")):
         return None
-    return "no such file. Give the ckpt.npz of the pretrained base run, e.g. work3\\run_pre\\ckpt.npz"
+    return PROBLEMS["base_missing"]
 
 
 def _check_new_run(val):
     if os.path.isfile(os.path.join(val, "ckpt.npz")):
-        return "that run already exists, so this would CONTINUE it instead of starting a fine-tune. Type a new folder name"
+        return PROBLEMS["run_exists"].format(name=_d_ft_run({"init": os.path.join(val, "ckpt.npz")}, {}))
     return None
 
 
@@ -213,8 +213,8 @@ def _check_langs(val):
     from .corpus import CorpusError, check_langs
     try:
         check_langs([x.strip().lower() for x in val.split(",") if x.strip()])
-    except CorpusError as e:
-        return str(e)
+    except CorpusError:
+        return PROBLEMS["langs"]
     return None
 
 
@@ -232,6 +232,22 @@ HELP = {"lang": "which public text to get, comma separated: en (English), tl (Ta
         "dir": "the folder to look at",
         "hf_action": "new = a wizard that makes a recipe; list; show; peek = look at the first rows; run = stream + clean + write the output; assemble = build the output from what is saved; tokens = make token files; colab-kit = a zip for Google Drive",
         "hf_recipe": "the recipe id (a file in dataset_recipes\\). Leave empty for new, or when you have only one recipe"}
+
+def field_text(item, f):
+    # plain-words record of one question; the technical text is only a fallback for a field without a record
+    rec = FIELD_TEXT.get(item["label"], {}).get(f["key"])
+    if rec:
+        return rec
+    h = f.get("help") or HELP.get(f["key"], "")
+    return dict(label=f["ask"], help=h, more=h, example="", default="")
+
+
+def enter_note(rec, f, value):
+    # what pressing Enter does, in words
+    if value:
+        return FORM["enter"].format(note=(rec.get("default") or "the answer shown: {value}").replace("{value}", value))
+    return FORM["enter_none"] if f["required"] else FORM["enter_skip"]
+
 
 # ------------------------------------------------------------------ the training settings screen
 SETTINGS = [
@@ -728,7 +744,7 @@ class Form(Live):
         self.item, self.found, self.fields = item, found, item["fields"]
         n = len(self.fields)
         self.val, self.touched, self.fresh = [""] * n, [False] * n, [True] * n
-        self.focus, self.msg = 0, ""
+        self.focus, self.msg, self.long = 0, "", False
         self.refresh()
 
     # ---- answers
@@ -746,9 +762,9 @@ class Form(Live):
     def problem(self, j):
         f, v = self.fields[j], self.val[j]
         if f["required"] and not v:
-            return "%s is needed." % f["ask"]
+            return PROBLEMS["required"].format(label=field_text(self.item, f)["label"])
         if f["choices"] and v and v not in f["choices"]:
-            return "choose one of: %s" % ", ".join(f["choices"])
+            return PROBLEMS["choice"].format(choices=", ".join(f["choices"]))
         if f.get("check") and v:
             return f["check"](v)
         return None
@@ -756,7 +772,10 @@ class Form(Live):
     # ---- keys; returns "done", "cancel" or None
     def key(self, k):
         n = len(self.fields)
-        self.msg = ""
+        self.msg, self.long = "", False
+        if k == "?" and self.focus < n and (self.fields[self.focus]["choices"] or not self.touched[self.focus]):
+            self.long = True                                               # "?" is a letter once you type in a text answer
+            return None
         if k == "esc":
             return "cancel"
         if k in ("down", "tab"):
@@ -807,13 +826,14 @@ class Form(Live):
     # ---- drawing
     def lines(self):
         W, n = self.W, len(self.fields)
-        label_w = min(34, max(len(f["ask"]) for f in self.fields) + 2)
+        recs = [field_text(self.item, f) for f in self.fields]
+        label_w = min(34, max(len(r["label"]) for r in recs) + 2)
         room = W - 4 - 2 - label_w - 1
         rows = []
         for j, f in enumerate(self.fields):
             cur = j == self.focus
             v = self.val[j]
-            label = f["ask"] + (" *" if f["required"] else "")
+            label = recs[j]["label"] + (" *" if f["required"] else "")
             head = self.c((self.ptr if cur else " ") + " " + label.ljust(label_w), "1;36" if cur else "0")
             if f["choices"]:
                 body = " ".join(self.c(" %s " % c, "30;46") if c == v and cur else (self.c(" %s " % c, "1;32") if c == v else self.c(" %s " % c, "90")) for c in f["choices"])
@@ -831,18 +851,25 @@ class Form(Live):
         box1 = self.box("Questions", rows, W, len(rows) + 2)
 
         if self.focus < n:
-            f = self.fields[self.focus]
-            help_ = textwrap.wrap((f.get("help") or HELP.get(f["key"], "")), W - 4)[:3]
-            info = "Tip: type to replace the shown answer, Right arrow to edit it." if not f["choices"] and self.fresh[self.focus] and self.val[self.focus] else \
-                   ("Left / Right or Space to choose." if f["choices"] else "")
+            f, rec = self.fields[self.focus], recs[self.focus]
+            if self.long:
+                body = textwrap.wrap(rec["more"], W - 4)[:4]
+                body += [""] * (4 - len(body))
+            else:
+                body = textwrap.wrap(rec["help"], W - 4)[:2]
+                body += [""] * (2 - len(body))
+                body += [self.c("%s %s" % (FORM["example"], rec["example"]), "90") if rec["example"] else "",
+                         self.c(enter_note(rec, f, self.val[self.focus]), "90")]
+            info = FORM["info_choice"] if f["choices"] else (FORM["info_text"] if self.fresh[self.focus] and self.val[self.focus] else FORM["info_typing"])
         else:
-            help_, info = ["Enter checks every answer and goes on."], ""
-        help_ += [""] * (3 - len(help_))
+            body, info = [FORM["start_help"]] + [""] * 3, ""
         last = self.c(self.msg, "1;31") if self.msg else self.c(info, "90")
         cmd = "$ persona_lm " + subprocess.list2cmdline(build_argv(self.item, self.answers()))
-        box2 = self.box("About this question", help_ + [last, self.c(cmd, "36")], W, 7)
-        title = self.c(" %s " % self.item["label"], "1;36") + self.c(self.dot + " up/down move   Enter next   Esc back", "90")
-        return ["", title] + box1 + box2
+        box2 = self.box("About this question", body + [last, self.c(cmd, "36")], W, 8)
+        text = plain_text(self.item)["title"]
+        tech = TECH_NAMES.get(self.item["label"])
+        title = self.c(" %s " % text, "1;36") + (self.c("(%s)" % tech, "90") if tech else "")
+        return ["", title, self.c(fit(" " + FORM["footer"], W), "90")] + box1 + box2
 
     def run(self, read):
         self._write("\x1b[?25l")
@@ -938,8 +965,8 @@ def collect(item, found, ask=input, say=print):
     answers = {}
     n = len(item["fields"])
     if n:
-        say("\n  %s" % item["label"])
-        say("  Answer each question, or press Enter to use the value in [brackets]. Ctrl+C goes back to the menu.")
+        say("\n  %s" % plain_text(item)["title"])
+        say("  " + FORM["collect_intro"])
     try:
         for i, f in enumerate(item["fields"], 1):
             default = f["default"](answers, found)
@@ -947,12 +974,19 @@ def collect(item, found, ask=input, say=print):
             note = "[%s]" % default if default else ("[%s]" % hint if hint else ("" if f["required"] else "(optional, Enter to skip)"))
             if f["choices"]:
                 note += " choices: %s" % "/".join(f["choices"])
-            say("\n  %d/%d  %s: %s" % (i, n, f["ask"], (f.get("help") or HELP.get(f["key"], ""))))
+            rec = field_text(item, f)
+            say("\n  %d/%d  %s%s: %s" % (i, n, rec["label"], " *" if f["required"] else "", rec["help"]))
+            if rec["example"]:
+                say("       %s %s" % (FORM["example"], rec["example"]))
+            say("       " + enter_note(rec, f, default))
             while True:
                 val = ask("       %s > " % note if note else "       > ").strip().strip('"').strip()
+                if val == "?":
+                    say("       " + rec["more"])
+                    continue
                 val = val or default
                 if f["choices"] and val and val not in f["choices"]:
-                    say("       choose one of: %s" % ", ".join(f["choices"]))
+                    say("       " + PROBLEMS["choice"].format(choices=", ".join(f["choices"])))
                     continue
                 if f.get("check") and val:
                     problem = f["check"](val)
@@ -961,7 +995,7 @@ def collect(item, found, ask=input, say=print):
                         continue
                 break
             if not val and f["required"]:
-                say("  %s is needed, so nothing was started." % f["ask"])
+                say("  " + FORM["needed_stop"].format(label=rec["label"]))
                 return None
             answers[f["key"]] = val
             if f.get("switch"):

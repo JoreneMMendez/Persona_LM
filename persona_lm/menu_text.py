@@ -232,3 +232,107 @@ NEXT = dict(
     base_only="Your newest model, {name}, is a base model and cannot chat yet. Pick '{finetune}'.",
     chat_ready="Your AI {name} can chat. Pick '{chat}' to talk to it.",
 )
+
+# ---- T3: question forms ---------------------------------------------------------------------
+# One record per question: FIELD_TEXT[item label][field key] = label, help (one line), more (shown by "?"), example, default.
+# `default` follows "Enter = " and may use {value}, the answer that is filled in for you.
+FIELD_TEXT = {
+    "Train or resume a run": dict(
+        run=dict(label="Run folder name", help="The folder where this run is saved. An existing folder is continued.",
+                 more="Type a new name to start a new run, like run_chat4. Type an old name to continue that run where it stopped.",
+                 example="work3\\run_chat4", default="newest run: {value}"),
+        data=dict(label="Prepared text folder", help="The folder with your prepared text files. Your AI reads these.",
+                  more="Made by 'Make prepared text files' or by the chat data steps. Pick the folder that matches what you want to teach.",
+                  example="work3\\data_pre", default="newest folder found: {value}"),
+        size=dict(label="Model size", help="How big your AI is. It must match the run you continue.",
+                  more="A small size is fast. A bigger size can learn more. Use the same size as the model you start from.",
+                  example="s30m", default="the size of that run: {value}"),
+        init=dict(label="Copy knowledge from", help="Only for a NEW run: start from another model file instead of from nothing.",
+                  more="Leave it empty to continue a run or to start fresh. Fill it in only to start from a base model.",
+                  example="work3\\run_pre\\ckpt.npz", default=""),
+    ),
+    "Chat with a model": dict(
+        ckpt=dict(label="Model to talk to", help="The model file of the AI you want to chat with.",
+                  more="Use a run that was taught to chat, like run_chat2. A base run only continues text.",
+                  example="work3\\run_chat2\\ckpt.npz", default="newest chat model: {value}"),
+        tok=dict(label="Tokenizer file", help="The tokenizer file that goes with the model.",
+                 more="This is almost always work\\tok.json. Never make a new one.",
+                 example="work\\tok.json", default="the tokenizer found: {value}"),
+        system=dict(label="Starting role", help="A role your AI starts the chat with. You can skip this.",
+                    more="For example: You are Aria. It shapes the first answers. Leave it empty for a normal chat.",
+                    example="You are Aria.", default=""),
+    ),
+    "Fine-tune a model (chat tuning)": dict(
+        init=dict(label="Base model to copy", help="The base model file. It is only copied, never changed.",
+                  more="Pick the model file of the base run, usually named run_pre. Its folder is not changed.",
+                  example="work3\\run_pre\\ckpt.npz", default="newest base model: {value}"),
+        run=dict(label="New run folder name", help="A NEW folder where your chat model is saved.",
+                 more="It must not exist yet. Use run_chat1, run_chat2 and so on. An old name would continue the old run.",
+                 example="run_chat4", default="next free name: {value}"),
+        data=dict(label="Chat files folder", help="The folder with your prepared chat files.",
+                  more="Pick the chat folder, not the folder that was used for the base model.",
+                  example="data_chat", default="newest chat folder: {value}"),
+        size=dict(label="Model size", help="It must match the size of the base model.",
+                  more="Choose the same size as the base model. A wrong size cannot be loaded.",
+                  example="s30m", default="the size of the base model: {value}"),
+    ),
+    "Generate text": dict(
+        ckpt=dict(label="Model to use", help="The model file that will continue your text.",
+                  more="Any model file works here. A base run is fine, because this does not chat.",
+                  example="work3\\run_pre\\ckpt.npz", default="newest model: {value}"),
+        tok=dict(label="Tokenizer file", help="The tokenizer file that goes with the model.",
+                 more="This is almost always work\\tok.json. Never make a new one.",
+                 example="work\\tok.json", default="the tokenizer found: {value}"),
+        prompt=dict(label="Start of the text", help="Type the words your AI should continue.",
+                    more="A few words are enough. Your AI writes what might come next.",
+                    example="Magandang umaga", default=""),
+    ),
+    "Project status": dict(
+        dir=dict(label="Folder to look at", help="The project folder to look at.",
+                 more="Leave it as it is to look at the folder you are in.",
+                 example=".", default="the current folder: {value}"),
+    ),
+    "Speed benchmark": dict(
+        size=dict(label="Model size to test", help="The size of model you plan to use.",
+                  more="The test then estimates how long teaching that size would take.",
+                  example="s30m", default="the size of your newest run: {value}"),
+    ),
+    "Dataset recipes (create / run)": dict(
+        hf_action=dict(label="What to do", help="Pick one step of the dataset recipe tool.",
+                       more="new makes a recipe by answering questions. list shows saved recipes. run gets the data. tokens makes prepared text files.",
+                       example="new", default="new: make a recipe by answering questions"),
+        hf_recipe=dict(label="Recipe name", help="The name of a saved recipe. Skip it for a new recipe.",
+                       more="Recipes are saved in the folder dataset_recipes. Skip this if you only have one.",
+                       example="oshichats", default=""),
+    ),
+    "Language data (download)": dict(
+        lang=dict(label="Languages", help="Which public text to get. Separate the choices with commas.",
+                  more="en is English, tl is Tagalog, ceb is Cebuano. Taglish needs your OK on the next screen.",
+                  example="en,tl", default="all four languages: {value}"),
+        mode=dict(label="What to do", help="Download and clean, or only clean what you already have.",
+                  more="all downloads, then cleans and checks. clean only cleans the text already in public_text.",
+                  example="clean", default="all: download, then clean"),
+        mix=dict(label="Also rebuild the mix", help="Choose yes to also rebuild the mix used for base teaching.",
+                 more="The mix is made from the cleaned text. Choose no if you are unsure.",
+                 example="no", default="no: leave the mix alone"),
+    ),
+}
+
+FORM = dict(
+    example="Example:", enter="Enter = {note}", enter_skip="Enter = leave this empty", enter_none="Nothing is filled in for you. Type an answer.",
+    info_choice="Left/Right or Space to choose. ? = more help.", info_text="Type to replace the answer. Right arrow edits it. ? = more help.",
+    info_typing="Enter = next. Esc = go back.", start_help="Enter checks every answer and goes on.",
+    footer="* = you must answer, Esc = go back",
+    collect_intro="* = you must answer. Press Enter to use the answer shown. Type ? for more help. Ctrl+C goes back.",
+    needed_stop="'{label}' is needed, so nothing was started.",
+)
+
+# What the person sees when an answer is not accepted. Each says what is wrong and what to do.
+PROBLEMS = dict(
+    required="'{label}' is needed. Type an answer, or press Esc to go back.",
+    choice="Choose one of: {choices}. Use the Left and Right keys.",
+    base_missing="That file was not found. Give the model file of the base run, like work3\\run_pre\\ckpt.npz.",
+    run_exists="That folder already exists. Pick a new name like {name}, or it will continue the old run.",
+    langs="Use en, tl, ceb or taglish, separated by commas.",
+    recipe_id="A recipe name has 1 to 40 small letters, digits, - or _.",
+)

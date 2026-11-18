@@ -29,6 +29,13 @@ def all_texts():
         yield "T2[%s]" % k, text
     for head, _ in mt.GROUPS:
         yield "GROUPS[%s]" % head, head
+    for label, fields in mt.FIELD_TEXT.items():
+        for key, rec in fields.items():
+            for part in ("label", "help", "more", "example", "default"):
+                if part not in ("example", "default"):
+                    yield "FIELD_TEXT[%s][%s].%s" % (label, key, part), rec[part]
+    for name, text in list(mt.FORM.items()) + list(mt.PROBLEMS.items()):
+        yield "T3[%s]" % name, text
     for i, (_pat, what, why, todo) in enumerate(mt.FRIENDLY_ERRORS):
         for name, text in (("what", what), ("why", why), ("todo", todo)):
             yield "FRIENDLY_ERRORS[%d].%s" % (i, name), text
@@ -174,6 +181,81 @@ class MainScreen(unittest.TestCase):
         for head, _ in mt.GROUPS:
             self.assertIn(head, text)
         self.assertEqual(M._fallback(STATES["chat"], lambda q: "3", lambda *_: None, 60), M.DISPLAY[2])
+
+
+class Forms(unittest.TestCase):
+    FOUND = dict(runs=[run("work3/run_chat3", 10, 10)], data=["work3/data_chat"], toks=["work/tok.json"], torch=True)
+
+    def test_every_field_has_label_help_example_and_more(self):
+        for item in ITEMS:
+            for f in item["fields"]:
+                rec = mt.FIELD_TEXT[item["label"]][f["key"]]
+                for part in ("label", "help", "more", "example"):
+                    self.assertTrue(rec[part].strip(), "%s/%s: no %s" % (item["label"], f["key"], part))
+                self.assertLessEqual(len(rec["label"]), 28, rec["label"])
+        known = {(i["label"], f["key"]) for i in ITEMS for f in i["fields"]}
+        self.assertEqual({(l, k) for l, fs in mt.FIELD_TEXT.items() for k in fs}, known)
+
+    def test_forms_fit_60_and_80_columns_even_on_a_cp1252_console(self):
+        for width in (60, 80):
+            for item in ITEMS:
+                if not item["fields"]:
+                    continue
+                form = M.Form(item, self.FOUND, StrictCp1252(), color=False, width=width, unicode_ok=False)
+                for step in range(len(item["fields"]) + 1):
+                    for long in (False, True):
+                        form.long = long
+                        for line in form.lines():
+                            line.encode("cp1252")
+                            self.assertLessEqual(len(line), width - 1, (item["label"], line))
+                    form.key("down")
+
+    def test_question_shows_help_example_and_what_enter_does(self):
+        item = ITEMS[2]                                                 # fine-tune
+        form = M.Form(item, self.FOUND, TTY(), color=False, width=80)
+        form.focus = 1
+        text = "\n".join(form.lines())
+        rec = mt.FIELD_TEXT[item["label"]]["run"]
+        self.assertIn(rec["help"][:30], text)
+        self.assertIn("Example: " + rec["example"], text)
+        self.assertIn("Enter = next free name: ", text)
+        self.assertIn("* = you must answer, Esc = go back", text)
+
+    def test_question_mark_shows_more_help_but_is_a_letter_when_typing(self):
+        item = ITEMS[2]
+        form = M.Form(item, self.FOUND, TTY(), color=False, width=80)
+        form.key("?")
+        self.assertIn(mt.FIELD_TEXT[item["label"]]["init"]["more"][:30], "\n".join(form.lines()))
+        form.key("down")                                                # any other key goes back to the short help
+        self.assertNotIn(mt.FIELD_TEXT[item["label"]]["run"]["more"][:30], "\n".join(form.lines()))
+        form.key("x")
+        form.key("?")
+        self.assertTrue(form.val[1].endswith("x?"))
+
+    def test_plain_problems(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "run_chat3"))
+            open(os.path.join(d, "run_chat3", "ckpt.npz"), "w").close()
+            msg = M._check_new_run(os.path.join(d, "run_chat3"))
+            self.assertIn("already exists", msg)
+            self.assertIn("run_chat4", msg)
+        item = ITEMS[2]
+        form = M.Form(item, dict(runs=[], data=[], toks=[], torch=False), TTY(), color=False, width=80)
+        form.val[0] = ""
+        self.assertIn("is needed", form.problem(0))
+        self.assertIn("Base model to copy", form.problem(0))
+
+    def test_typed_line_questions_print_the_same_help_and_question_mark_helps(self):
+        said, answers = [], iter(["?", "", "", "hello"])
+        item = [i for i in ITEMS if i["cmd"] == "generate"][0]
+        argv = M.collect(item, self.FOUND, ask=lambda q: next(answers), say=said.append)
+        text = "\n".join(said)
+        self.assertIn(mt.FIELD_TEXT[item["label"]]["ckpt"]["help"], text)
+        self.assertIn("Example: " + mt.FIELD_TEXT[item["label"]]["ckpt"]["example"], text)
+        self.assertIn("Enter = newest model: ", text)
+        self.assertIn(mt.FIELD_TEXT[item["label"]]["ckpt"]["more"], text)
+        self.assertEqual(argv[0], "generate")
+        self.assertIn("hello", argv)
 
 if __name__ == "__main__":
     unittest.main()

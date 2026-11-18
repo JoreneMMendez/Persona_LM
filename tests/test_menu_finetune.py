@@ -100,9 +100,9 @@ class FineTuneItem(InDir):
 
     def test_an_existing_run_folder_and_a_missing_base_are_refused(self):
         project(".", chat_runs=(1,))
-        self.assertIn("CONTINUE", M._check_new_run(os.path.join("work3", "run_chat1")))
+        self.assertIn("continue the old run", M._check_new_run(os.path.join("work3", "run_chat1")))
         self.assertIsNone(M._check_new_run(os.path.join("work3", "run_chat9")))
-        self.assertIn("no such file", M._check_base_ckpt(os.path.join("work3", "nope", "ckpt.npz")))
+        self.assertIn("not found", M._check_base_ckpt(os.path.join("work3", "nope", "ckpt.npz")))
         self.assertIsNone(M._check_base_ckpt(os.path.join("work3", "run_pre", "ckpt.npz")))
 
     def test_the_preset_applies_to_the_new_run_only_not_to_normal_train(self):
