@@ -21,7 +21,8 @@ import textwrap
 from .pretty import MAX_W, MIN_WIDTH, Skin, enable_vt, fit
 from .model import PRESETS
 from .train import DEFAULT_HP
-from .menu_text import DETAIL_FIELDS, FIELD_TEXT, FORM, GROUPS, ITEM_TEXT, NEXT, PROBLEMS, SCREEN, TECH_NAMES
+from .menu_text import (CONFIRM, DETAIL_FIELDS, FIELD_TEXT, FORM, GROUPS, ITEM_TEXT, NEXT, PRESET_TEXT, PROBLEMS, SCREEN,
+                        SETTING_TEXT, SETTINGS_UI, TECH_NAMES)
 
 SKIP_DIRS = {".git", "__pycache__", "node_modules", "venv", ".venv", "site-packages", "private", "tests", "docs"}
 SIZES = sorted(PRESETS, key=lambda k: PRESETS[k]["d_model"])
@@ -250,69 +251,18 @@ def enter_note(rec, f, value):
 
 
 # ------------------------------------------------------------------ the training settings screen
-SETTINGS = [
-    dict(key="steps", short="how long the run is", kind=int, lo=1, hi=10 ** 7,
-         what="How many training steps the whole run lasts. Each step reads a batch of text and updates the model once.",
-         up="Longer training. The model sees the data more times: it can learn more, but on small data it starts memorizing (overfitting).",
-         down="A shorter, faster run. Less risk of memorizing, but a less-trained model.",
-         affects="Run time, and the learning-rate curve (it shrinks gradually until the last step).",
-         tip="Must be more than the current step when resuming. Compare 'tokens seen' below with the size of your token files."),
-    dict(key="lr", short="size of each update", kind=float, lo=1e-6, hi=1e-1,
-         what="Learning rate: how big a change each step makes to the model. It starts here and slowly shrinks to min_lr.",
-         up="Learns faster, but can become unstable (loss spikes, or nan).",
-         down="Gentler, steadier updates. Slower progress, and usually less overfitting.",
-         affects="Speed and stability of learning. Changing it in the middle of a run makes the rate jump to the new curve at once.",
-         tip="3e-4 for a gentler pretraining run; 1e-4 for chat fine-tuning."),
-    dict(key="min_lr", short="size of updates at the end", kind=float, lo=0.0, hi=1e-1,
-         what="The smallest learning rate, reached at the last step.",
-         up="The model is still changed strongly late in the run.",
-         down="The run settles gently at the end, which polishes fine details.",
-         affects="How the end of the run behaves.",
-         tip="About one tenth of lr. Must not be higher than lr."),
-    dict(key="warmup", short="slow start", kind=int, lo=0, hi=100000,
-         what="Steps at the start where the learning rate climbs slowly from 0 up to lr, so a fresh model is not shaken by big early updates.",
-         up="A safer start, slightly slower.",
-         down="A faster start, with a risk of early loss spikes.",
-         affects="Only the first steps of a NEW run. No effect when you resume a run that is already past this step.",
-         tip="50 to 100 is typical."),
-    dict(key="weight_decay", short="brake on memorizing", kind=float, lo=0.0, hi=1.0,
-         what="A small pull of every weight toward zero at each step. It works as a brake on memorizing the training text.",
-         up="A stronger brake: less overfitting. Too high and the model cannot learn (loss stays high).",
-         down="A weaker brake: fits the training text more closely and overfits sooner.",
-         affects="How much the model memorizes instead of generalizing.",
-         tip="0.1 is the default. 0.2 is a good try when data is small."),
-    dict(key="clip", short="cap on one update", kind=float, lo=0.0, hi=100.0,
-         what="Gradient clipping: limits how large one update may be, so a single odd batch cannot wreck the model.",
-         up="Allows bigger updates.",
-         down="Safer against loss spikes; too low slows learning.",
-         affects="Stability. 0 turns it off.",
-         tip="Leave it at 1.0 unless you see sudden loss spikes."),
-    dict(key="batch", short="texts per GPU pass", kind=int, lo=1, hi=512,
-         what="How many text sequences the GPU reads at once (one micro-batch).",
-         up="Faster per token, but needs more GPU memory. A 6 GB laptop GPU runs out quickly.",
-         down="Uses less memory, but slower.",
-         affects="GPU memory and speed. Together with accum it sets the effective batch.",
-         tip="If you get an out-of-memory error, halve batch and double accum."),
-    dict(key="accum", short="passes per update", kind=int, lo=1, hi=1024,
-         what="How many micro-batches are added up before the model is updated once. It is a way to get a big batch on a small GPU.",
-         up="Smoother, more reliable updates (a bigger effective batch). Each step takes longer.",
-         down="Quicker steps, but noisier updates.",
-         affects="Effective batch = batch x accum, and the time per step.",
-         tip="Keep batch x accum the same when you only want to fit the GPU memory."),
-    dict(key="eval_every", short="how often to check val", kind=int, lo=1, hi=100000,
-         what="How often (in steps) the model is tested on validation text that it never trains on. This is where the val number comes from.",
-         up="Fewer checks, slightly faster, but you notice overfitting later.",
-         down="You spot overfitting sooner, with a tiny slowdown.",
-         affects="How closely you can watch for overfitting (and which step can be 'best').",
-         tip="100 to 200."),
-]
+SETTINGS = [dict(key=k, kind=kind, lo=lo, hi=hi) for k, kind, lo, hi in (
+    ("steps", int, 1, 10 ** 7), ("lr", float, 1e-6, 1e-1), ("min_lr", float, 0.0, 1e-1), ("warmup", int, 0, 100000),
+    ("weight_decay", float, 0.0, 1.0), ("clip", float, 0.0, 100.0), ("batch", int, 1, 512), ("accum", int, 1, 1024),
+    ("eval_every", int, 1, 100000))]
+for _d in SETTINGS:
+    _d.update(SETTING_TEXT[_d["key"]])                   # name, short, what, up, down, affects, tip (plain words, in menu_text.py)
 
-QUICK = [
-    ("Fight overfitting", dict(weight_decay=0.2, lr=3e-4, min_lr=3e-5, eval_every=100),
-     "Stronger brake on memorizing, gentler updates, validation checked every 100 steps. It cannot replace more data."),
-    ("Chat fine-tune", dict(lr=1e-4, min_lr=1e-5, warmup=50, steps=3000),
-     "A short, gentle run for tuning a pretrained model on chat data. Needs a NEW run folder with 'Start from weights' filled in."),
-]
+# the numbers behind the ready-made choices of menu_text.PRESET_TEXT (same order)
+PRESET_VALUES = (dict(batch=1, accum=4, eval_every=100),
+                 dict(lr=1e-4, min_lr=1e-5, warmup=50, steps=3000),
+                 dict(weight_decay=0.2, lr=3e-4, min_lr=3e-5, eval_every=100))
+QUICK = [(name, vals, why) for (name, why), vals in zip(PRESET_TEXT, PRESET_VALUES)]
 
 
 def _fmt(v):
@@ -323,68 +273,88 @@ def _parse(text, kind):
     return kind(float(text.replace(",", "").replace("_", ""))) if kind is int else float(text.replace(",", ""))
 
 
-def edit_settings(base, ctx, step, ask=input, say=print, start=None):
-    """Shows the training settings with plain-words help and lets the person change any of them before the run starts.
+def _train_tokens(answers):
+    # tokens in the training file of the chosen prepared text folder; only the file SIZE is looked at (2 bytes per token)
+    try:
+        return os.path.getsize(os.path.join(answers["data"], "train.bin")) // 2 if answers.get("data") else None
+    except OSError:
+        return None
+
+
+def edit_settings(base, ctx, step, ask=input, say=print, start=None, train_tokens=None, width=None):
+    """Shows the training settings in plain words and lets the person change any of them before the run starts.
     `base` = the values the run uses now (saved in the run, or the defaults for a new one); `ctx` = tokens per sequence; `step` = where
-    a resumed run is (0 for a new one). Returns only the settings that were CHANGED, as {name: value}."""
+    a resumed run is (0 for a new one); `train_tokens` = size of the prepared text, if known (for the passes warning).
+    Returns only the settings that were CHANGED, as {name: value}."""
+    U = SETTINGS_UI
+    w = min((width or shutil.get_terminal_size((80, 24)).columns) - 1, 79)
+    out = lambda text, ind="  ", sub="  ": [say(l) for l in textwrap.wrap(text, w, initial_indent=ind, subsequent_indent=sub)] or say("")
     begin = dict(base, **(start or {}))                  # a new fine-tune begins on the gentle chat-tuning numbers
     cur = dict(begin)
     n = len(SETTINGS)
-    say("\n  Training settings")
-    say("  These are the numbers training will use. Press Enter to keep them all, or type a number to see what a setting does and change it.")
+    say("\n  " + U["title"])
+    out(U["intro"])
     while True:
         say("")
         for i, d in enumerate(SETTINGS, 1):
             k = d["key"]
             mark = "*" if cur[k] != base[k] else " "
-            was = "  (was %s)" % _fmt(base[k]) if mark == "*" else ""
-            say("  %s%d  %-13s %9s   %s%s" % (mark, i, k, _fmt(cur[k]), d["short"], was))
+            was = U["was"].format(old=_fmt(base[k])) if mark == "*" else ""
+            out("%s%d  %-16s %9s   %s%s" % (mark, i, d["name"], _fmt(cur[k]), d["short"], was), "  ", " " * 33)
         per = cur["batch"] * cur["accum"] * ctx
-        say("\n  Each step trains on %s tokens, so %s steps = %s tokens in total. Far more tokens than your data holds means memorizing." % (
-            format(per, ","), format(cur["steps"], ","), format(per * cur["steps"], ",")))
+        say("")
+        out(U["per_step"].format(per=format(per, ","), steps=format(cur["steps"], ","), total=format(per * cur["steps"], ",")))
+        if train_tokens:
+            passes = cur["steps"] * per / train_tokens
+            out(U["passes"].format(passes="%.1f" % passes) + (" " + U["passes_warn"] if passes > 4 else ""))
+        else:
+            out(U["no_data"])
         if step and any(cur[k] != base[k] for k in ("lr", "min_lr", "steps")):
-            say("  Heads-up: this run is at step %s. The learning rate follows a curve from lr down to min_lr over all the steps, so changing lr, min_lr or steps makes it jump to the new curve right now." % format(step, ","))
+            out(U["heads_resume"].format(step=format(step, ",")))
         if cur["batch"] * cur["accum"] != base["batch"] * base["accum"]:
-            say("  Heads-up: batch x accum changed, so each update now uses a different amount of text. Fine, just not the same as before.")
-        k = ask("\n  Change which? number 1-%d, p = quick presets, r = reset, Enter = continue > " % n).strip().lower()
+            out(U["heads_reads"])
+        k = ask("\n  " + U["prompt"].format(n=n)).strip().lower()
         if not k:
             break
         if k == "r":
             cur = dict(begin)
         elif k == "p":
             say("")
+            names = {d["key"]: d["name"] for d in SETTINGS}
             for j, (name, vals, why) in enumerate(QUICK, 1):
-                say("  %d  %s: %s" % (j, name, ", ".join("%s=%s" % (a, _fmt(b)) for a, b in vals.items())))
-                say("     %s" % why)
-            c = ask("\n  Apply which? number, or Enter for none > ").strip()
+                say("  %d  %s" % (j, name))
+                out(why, "     ", "     ")
+                out("Sets: " + ", ".join("%s = %s" % (names[a], _fmt(b)) for a, b in vals.items()), "     ", "       ")
+            c = ask("\n  " + U["apply"]).strip()
             if c.isdigit() and 1 <= int(c) <= len(QUICK):
                 cur.update(QUICK[int(c) - 1][1])
         elif k.isdigit() and 1 <= int(k) <= n:
             d = SETTINGS[int(k) - 1]
-            say("\n  %s   (now %s, was %s)" % (d["key"], _fmt(cur[d["key"]]), _fmt(base[d["key"]])))
-            for label, field in (("What it does", "what"), ("Raise it", "up"), ("Lower it", "down"), ("Affects", "affects"), ("Tip", "tip")):
-                for j, line in enumerate(textwrap.wrap(d[field], 74)):
-                    say("    %-13s %s" % (label + ":" if j == 0 else "", line))
-            raw = ask("\n  New value (Enter = keep) > ").strip()
+            say("")
+            out(U["detail"].format(name=d["name"], key=d["key"], short=d["short"]))
+            out(U["now"].format(now=_fmt(cur[d["key"]]), old=_fmt(base[d["key"]])))
+            for label, field in U["labels"]:
+                out("%s: %s" % (label, d[field]), "    ", "      ")
+            raw = ask("\n  " + U["value_prompt"]).strip()
             if raw:
                 try:
                     v = _parse(raw, d["kind"])
                 except ValueError:
-                    say("  that is not a number, nothing changed")
+                    out(U["bad_number"])
                     continue
                 key = d["key"]
                 if not d["lo"] <= v <= d["hi"]:
-                    say("  %s must be between %s and %s, nothing changed" % (key, _fmt(d["lo"]), _fmt(d["hi"])))
+                    out(U["out_of_range"].format(name=d["name"], lo=_fmt(d["lo"]), hi=_fmt(d["hi"])))
                 elif key == "steps" and step and v <= step:
-                    say("  steps must be more than %s, where this run already is, nothing changed" % format(step, ","))
+                    out(U["steps_low"].format(step=format(step, ",")))
                 elif key == "lr" and v < cur["min_lr"]:
-                    say("  lr cannot be lower than min_lr (%s): lower min_lr first, nothing changed" % _fmt(cur["min_lr"]))
+                    out(U["lr_low"].format(v=_fmt(cur["min_lr"])))
                 elif key == "min_lr" and v > cur["lr"]:
-                    say("  min_lr cannot be higher than lr (%s), nothing changed" % _fmt(cur["lr"]))
+                    out(U["min_high"].format(v=_fmt(cur["lr"])))
                 else:
                     cur[key] = v
         else:
-            say("  type a number from 1 to %d, p, r, or just press Enter" % n)
+            out(U["junk"].format(n=n))
     return {k: cur[k] for k in cur if cur[k] != base[k]}
 
 
@@ -889,22 +859,22 @@ class Form(Live):
 
 
 class Confirm(Live):
-    """A boxed yes/no: Y starts, N or Esc cancels; Enter also starts unless the question needs a deliberate Y (strict) or is only a notice."""
+    """A boxed yes/no. The answer is NO unless you press Y: Enter, N and Esc all cancel. `strict` only changes the wording (a licence is accepted)."""
 
     def __init__(self, title, lines, strict=False, notice=False, stream=None, color=True, width=None, unicode_ok=None):
         Live.__init__(self, stream, color, width, unicode_ok)
         self.title, self.strict, self.notice = title, strict, notice
         self.text = []
-        for l in lines:
-            self.text += textwrap.wrap(l, self.W - 4, subsequent_indent="    " if l.startswith("  -") else "") or [""]
+        for j, l in enumerate(lines):
+            ind = "    " if l.startswith("  -") else ("  " if j else "")
+            self.text += textwrap.wrap(l, self.W - 4, subsequent_indent=ind) or [""]
 
     def lines(self):
+        C = CONFIRM
         if self.notice:
-            foot = self.c("Press any key to go back.", "90")
-        elif self.strict:
-            foot = self.c(" Y ", "30;42") + " accept and start     " + self.c(" N ", "30;41") + " cancel"
+            foot = self.c(C["foot_notice"], "90")
         else:
-            foot = self.c(" Y ", "30;42") + " / Enter start     " + self.c(" N ", "30;41") + " / Esc cancel"
+            foot = self.c(" Y ", "30;42") + " " + (C["foot_accept"] if self.strict else C["foot_yes"]) + "     " + self.c(" N ", "30;41") + " / Enter / Esc " + (C["foot_cancel"] if self.strict else C["foot_no"])
         return [""] + self.box(self.title, self.text + ["", foot], self.W, len(self.text) + 4)
 
     def run(self, read):
@@ -916,9 +886,9 @@ class Confirm(Live):
                     k = read()
                     if self.notice:
                         return False
-                    if k in ("y", "Y") or (k == "enter" and not self.strict):
+                    if k in ("y", "Y"):
                         return True
-                    if k in ("n", "N", "esc"):
+                    if k in ("n", "N", "esc", "enter"):
                         return False
         except KeyboardInterrupt:
             return False
@@ -936,7 +906,7 @@ def form_collect(item, found, out, color, width, read_edit, ask=input, say=print
     if item.get("settings"):
         try:
             base, ctx, step = settings_base(found, form.answers())
-            for k, v in edit_settings(base, ctx, step, ask, say, start=None if step else item.get("preset")).items():
+            for k, v in edit_settings(base, ctx, step, ask, say, start=None if step else item.get("preset"), train_tokens=_train_tokens(form.answers())).items():
                 argv += ["--" + k.replace("_", "-"), str(v)]
         except (KeyboardInterrupt, EOFError):
             say("")
@@ -947,13 +917,13 @@ def form_collect(item, found, out, color, width, read_edit, ask=input, say=print
 def confirm_box(argv, found, out, color, width, read_edit):
     """The boxed version of confirm_train / confirm_corpus. Commands that need no confirmation return True."""
     if argv[0] == "train":
-        return Confirm("Start training?", _train_lines(argv, found), False, False, out, color, width).run(read_edit)
+        return Confirm(CONFIRM["title_train"], _train_lines(argv, found), False, False, out, color, width).run(read_edit)
     if argv[0] == "corpus":
         lines, blocker, strict = _corpus_lines(argv)
         if blocker:
-            Confirm("Cannot start", lines, False, True, out, color, width).run(read_edit)
+            Confirm(CONFIRM["title_blocked"], lines, False, True, out, color, width).run(read_edit)
             return False
-        return Confirm("Start the download?", lines, strict, False, out, color, width).run(read_edit)
+        return Confirm(CONFIRM["title_corpus"], lines, strict, False, out, color, width).run(read_edit)
     return True
 
 
@@ -1005,7 +975,7 @@ def collect(item, found, ask=input, say=print):
                 argv += [f["flag"], val] if f["flag"] else [val]
         if item.get("settings"):
             base, ctx, step = settings_base(found, answers)
-            for k, v in edit_settings(base, ctx, step, ask, say, start=None if step else item.get("preset")).items():
+            for k, v in edit_settings(base, ctx, step, ask, say, start=None if step else item.get("preset"), train_tokens=_train_tokens(answers)).items():
                 argv += ["--" + k.replace("_", "-"), str(v)]
     except (KeyboardInterrupt, EOFError):
         say("")
@@ -1014,14 +984,27 @@ def collect(item, found, ask=input, say=print):
 
 
 def _train_lines(argv, found):
-    run = argv[argv.index("--run") + 1] if "--run" in argv else ""
+    """The 'You are about to ...' lines for a training run, in plain words. The exact command comes last."""
+    C = CONFIRM
+    arg = lambda name: argv[argv.index(name) + 1] if name in argv else ""
+    run, data, init = arg("--run"), arg("--data-dir"), arg("--init-from")
     r = _find_run(found, run)
     if r and r["step"]:
-        total = int(argv[argv.index("--steps") + 1]) if "--steps" in argv else r["steps"]
-        what = "CONTINUE %s from step %s%s" % (run, format(r["step"], ","), " of %s" % format(total, ",") if total else "")
+        total = int(arg("--steps") or 0) or r["steps"]
+        first = C["about_continue"].format(run=run, step=format(r["step"], ","), of=" of %s" % format(total, ",") if total else "")
+        create, new = C["create_continue"].format(run=run), False
     else:
-        what = "start a NEW run in %s" % run
-    return ["This will %s." % what, "If this run is already training in another window, do not start it a second time."]
+        first, create, new = C["about_new"].format(run=run), C["create_new"].format(run=run), True
+    happen = C["happen"].format(data=data or "your prepared text files") + (C["happen_copy"].format(init=init) if init and new else "")
+    return [first, happen, create, C["safe_base"] if init else C["safe"], C["time"], C["careful"], C["tech"].format(cmd=show_cmd(argv))]
+
+
+def _ask_yes(ask, prompt):
+    # a long action starts only on an explicit yes (Enter = no)
+    try:
+        return ask("  " + prompt).strip().lower() in ("y", "yes")
+    except (KeyboardInterrupt, EOFError):
+        return False
 
 
 def confirm_train(argv, found, ask=input, say=print):
@@ -1030,34 +1013,35 @@ def confirm_train(argv, found, ask=input, say=print):
     say("\n  " + lines[0])
     for l in lines[1:]:
         say("  " + l)
-    try:
-        return ask("  Start now? [Y/n] > ").strip().lower() not in ("n", "no")
-    except (KeyboardInterrupt, EOFError):
-        return False
+    return _ask_yes(ask, CONFIRM["ask_start"])
 
 
 def _corpus_lines(argv):
     """(lines, blocker, strict): what a language download will do; blocker = text if it cannot start; strict = needs a deliberate yes (Taglish licence)."""
     from .corpus import LANGS, check_langs
+    C = CONFIRM
     langs = check_langs([x.strip().lower() for x in argv[argv.index("--lang") + 1].split(",")]) if "--lang" in argv else list(LANGS)
     mode = argv[argv.index("--mode") + 1] if "--mode" in argv else "all"
-    lines = []
+    names = ", ".join(LANGS[l]["label"] for l in langs)
     if mode == "all":
-        lines.append("This will DOWNLOAD public text from the internet (nothing of yours is uploaded), then clean and check it:")
         if importlib.util.find_spec("datasets") is None:
-            lines.append("The `datasets` package is not installed, so nothing was started. Run:  pip install datasets")
-            return lines, True, False
+            return [C["blocked"], C["blocked_next"]], True, False
+        lines = [C["about_dl"], C["happen_dl"].format(langs=names)]
     else:
-        lines.append("This will only CLEAN and check text already in public_text\\ (no download):")
+        lines = [C["about_clean"], C["happen_clean"].format(langs=names)]
     for l in langs:
         d = LANGS[l]
         lines.append("  - %-8s %s  (%s, licence: %s)" % (d["label"], d["source"], "all of it" if not d["default_mb"] else "about %d MB" % d["default_mb"], d["license"]))
-    if "--mix" in argv:
-        lines.append("  - then rebuild public_mix\\ for these languages")
+    folders = ("public_text and public_clean" if mode == "all" else "public_clean") + (" and public_mix" if "--mix" in argv else "")
+    lines += [C["create_corpus"].format(folders=folders), C["safe_corpus"]]
+    mbs = [LANGS[l]["default_mb"] for l in langs]
+    if mode == "all":
+        lines.append(C["size_dl"].format(mb=sum(mbs)) if all(mbs) else C["size_unknown"])
+    lines.append(C["time_corpus"])
     strict = "taglish" in langs
     if strict:
-        lines += ["", "Taglish = real forum users' posts. Private training only: do not re-upload the data or publish a model trained on it without checking the site's terms."]
-    return lines, False, strict
+        lines += ["", C["taglish"]]
+    return lines + [C["tech"].format(cmd=show_cmd(argv))], False, strict
 
 
 def confirm_corpus(argv, ask=input, say=print):
@@ -1065,15 +1049,15 @@ def confirm_corpus(argv, ask=input, say=print):
     lines, blocker, strict = _corpus_lines(argv)
     say("")
     for l in lines:
-        say(("  " + l) if l else "")
+        say((("  " + l) if l else ""))
     if blocker:
         return False
     try:
-        if strict and ask("  Type yes to accept that > ").strip().lower() != "yes":
+        if strict and ask("  " + CONFIRM["ask_taglish"]).strip().lower() != "yes":      # the licence needs the whole word
             return False
-        return ask("  Start now? [Y/n] > ").strip().lower() not in ("n", "no")
     except (KeyboardInterrupt, EOFError):
         return False
+    return _ask_yes(ask, CONFIRM["ask_start"])
 
 
 def show_cmd(argv):

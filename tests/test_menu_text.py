@@ -36,6 +36,15 @@ def all_texts():
                     yield "FIELD_TEXT[%s][%s].%s" % (label, key, part), rec[part]
     for name, text in list(mt.FORM.items()) + list(mt.PROBLEMS.items()):
         yield "T3[%s]" % name, text
+    for key, rec in mt.SETTING_TEXT.items():
+        for part, text in rec.items():
+            yield "SETTING_TEXT[%s].%s" % (key, part), text
+    for name, why in mt.PRESET_TEXT:
+        yield "PRESET_TEXT[%s].name" % name, name
+        yield "PRESET_TEXT[%s].why" % name, why
+    for name, text in list(mt.SETTINGS_UI.items()) + list(mt.CONFIRM.items()):
+        if isinstance(text, str):
+            yield "T4[%s]" % name, text
     for i, (_pat, what, why, todo) in enumerate(mt.FRIENDLY_ERRORS):
         for name, text in (("what", what), ("why", why), ("todo", todo)):
             yield "FRIENDLY_ERRORS[%d].%s" % (i, name), text
@@ -256,6 +265,102 @@ class Forms(unittest.TestCase):
         self.assertIn(mt.FIELD_TEXT[item["label"]]["ckpt"]["more"], text)
         self.assertEqual(argv[0], "generate")
         self.assertIn("hello", argv)
+
+
+class Confirmations(unittest.TestCase):
+    FOUND = dict(runs=[run("work3/run_pre", 50, 100)], data=["work3/data_pre"], toks=[], torch=True)
+    ARGV = {
+        "new": ["train", "--run", "run_new", "--data-dir", "data_chat", "--size", "s30m"],
+        "continue": ["train", "--run", "work3/run_pre", "--data-dir", "work3/data_pre", "--size", "s30m"],
+        "finetune": ["train", "--run", "run_chat4", "--data-dir", "data_chat", "--size", "s30m", "--init-from", "work3/run_pre/ckpt.npz"],
+        "corpus": ["corpus", "--lang", "en", "--mode", "all"],
+        "corpus_all": ["corpus", "--lang", "en,ceb", "--mode", "all"],
+        "taglish": ["corpus", "--lang", "taglish", "--mode", "clean", "--mix"],
+    }
+
+    def lines(self, name):
+        argv = self.ARGV[name]
+        if argv[0] == "train":
+            return M._train_lines(argv, self.FOUND)
+        orig = M.importlib.util.find_spec
+        M.importlib.util.find_spec = lambda n, *a: object() if n == "datasets" else orig(n, *a)
+        try:
+            return M._corpus_lines(argv)[0]
+        finally:
+            M.importlib.util.find_spec = orig
+
+    def test_boxes_say_about_to_happen_created_not_changed_and_the_command_last(self):
+        for name in self.ARGV:
+            lines = [l for l in self.lines(name) if l]
+            self.assertTrue(lines[0].startswith("You are about to"), name)
+            text = "\n".join(lines)
+            for want in ("What will happen:", "What will be created:", "What will NOT be changed:"):
+                self.assertIn(want, text, name)
+            self.assertTrue(lines[-1].startswith("Technical command (for experts): "), name)
+            self.assertIn("persona_lm", lines[-1])
+
+    def test_numbers_only_where_the_code_has_them(self):
+        self.assertIn("unknown until it starts", "\n".join(self.lines("continue")))
+        self.assertIn("Download size: about", "\n".join(self.lines("corpus")))
+        self.assertIn("Download size: unknown", "\n".join(self.lines("corpus_all")))     # Cebuano has no fixed size
+        self.assertIn("backup", "\n".join(self.lines("continue")))
+        self.assertIn("base model", "\n".join(self.lines("finetune")))
+        self.assertIn("run_pre", [l for l in self.lines("finetune") if "copy" in l][0])
+        self.assertIn("public_mix", "\n".join(self.lines("taglish")))
+
+    def test_enter_means_no_everywhere(self):
+        for strict in (False, True):
+            self.assertFalse(M.Confirm("t", ["x"], strict, False, TTY(), False, 80).run(iter(["enter"]).__next__))
+            self.assertTrue(M.Confirm("t", ["x"], strict, False, TTY(), False, 80).run(iter(["y"]).__next__))
+        self.assertFalse(M.confirm_train(self.ARGV["new"], self.FOUND, ask=lambda q: "", say=lambda *_: None))
+
+    def test_confirm_screens_fit_60_and_80_columns_on_cp1252(self):
+        for width in (60, 80):
+            for name in self.ARGV:
+                box = M.Confirm("Start?", self.lines(name), name == "taglish", False, StrictCp1252(), False, width, False)
+                for line in box.lines():
+                    line.encode("cp1252")
+                    self.assertLessEqual(len(line), width - 1, (name, line))
+                self.assertEqual(len({len(l) for l in box.lines()[1:]}), 1)
+
+
+class SettingsScreens(unittest.TestCase):
+    BASE = {"steps": 1000, "lr": 6e-4, "min_lr": 6e-5, "warmup": 100, "weight_decay": 0.1, "clip": 1.0, "batch": 2, "accum": 2, "eval_every": 200}
+
+    def screen(self, answers, tokens=None, width=60):
+        it, said = iter(list(answers) + [""] * 5), []
+        changed = M.edit_settings(dict(self.BASE), 4096, 0, ask=lambda q: next(it), say=said.append, train_tokens=tokens, width=width)
+        return changed, said
+
+    def test_three_named_presets_in_the_asked_order(self):
+        self.assertEqual([n for n, _ in mt.PRESET_TEXT], ["Safe (recommended)", "Gentle chat tuning", "Stop it memorizing"])
+        changed, said = self.screen(["p", "2", ""])
+        self.assertEqual(changed, {"lr": 1e-4, "min_lr": 1e-5, "warmup": 50, "steps": 3000})
+        self.assertIn("Safe (recommended)", "\n".join(said))
+
+    def test_screens_fit_60_columns_and_use_plain_names(self):
+        for answers in ([""], ["1", ""], ["p", ""], ["5", "0.2", ""], ["5", "9", ""], ["2", "abc", ""], ["zzz", ""]):
+            _, said = self.screen(answers)
+            for line in said:
+                self.assertLessEqual(len(line), 59, line)
+        text = "\n".join(self.screen([""])[1])
+        for d in M.SETTINGS:
+            self.assertIn(d["name"], text)
+
+    def test_memorizing_warning_in_words_when_the_data_size_is_known(self):
+        text = "\n".join(self.screen([""], tokens=1_000_000)[1])         # 1000 steps x 16,384 tokens = about 16 passes
+        flat = lambda t: " ".join(t.split())                            # the screen wraps lines
+        self.assertIn("passes over your data", flat(text))
+        self.assertIn("More than about 4 passes", flat(text))
+        self.assertNotIn("More than about 4 passes", flat("\n".join(self.screen([""], tokens=100_000_000)[1])))
+
+    def test_tokens_per_file_size_only(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "train.bin"), "wb") as fh:
+                fh.write(b"\0" * 2000)
+            self.assertEqual(M._train_tokens({"data": d}), 1000)
+        self.assertIsNone(M._train_tokens({"data": os.path.join("no", "such")}))
+        self.assertIsNone(M._train_tokens({}))
 
 if __name__ == "__main__":
     unittest.main()

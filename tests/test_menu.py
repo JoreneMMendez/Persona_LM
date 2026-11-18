@@ -168,10 +168,10 @@ class Settings(unittest.TestCase):
         self.assertEqual(edit(["2", "1e-5", ""])[0], {})                   # lr may not be below min_lr
 
     def test_preset_and_reset(self):
-        changed, text = edit(["p", "1", ""])
+        changed, text = edit(["p", "3", ""])
         self.assertEqual(changed, {"weight_decay": 0.2, "lr": 3e-4, "min_lr": 3e-5, "eval_every": 100})
-        self.assertIn("Heads-up", edit(["p", "1", ""], step=19403)[1])      # on a resumed run the lr-curve jump is explained
-        self.assertEqual(edit(["p", "1", "r", ""])[0], {})
+        self.assertIn("Heads-up", edit(["p", "3", ""], step=19403)[1])      # on a resumed run the lr-curve jump is explained
+        self.assertEqual(edit(["p", "3", "r", ""])[0], {})
 
     def test_tokens_seen_is_shown(self):
         self.assertIn("16,384 tokens", edit([""])[1])
@@ -192,7 +192,8 @@ class Confirm(unittest.TestCase):
             self.assertFalse(M.confirm_train(argv, f, ask=lambda q: "n", say=said.append))
             self.assertIn("CONTINUE", said[0])
             self.assertIn("18,300 of 36,000", said[0])
-            self.assertTrue(M.confirm_train(argv, f, ask=lambda q: "", say=lambda *_: None))
+            self.assertFalse(M.confirm_train(argv, f, ask=lambda q: "", say=lambda *_: None))     # Enter = no
+            self.assertTrue(M.confirm_train(argv, f, ask=lambda q: "y", say=lambda *_: None))
             said2 = []
             M.confirm_train(["train", "--run", "x"], f, ask=lambda q: "y", say=said2.append)
             self.assertIn("NEW run", said2[0])
@@ -210,7 +211,7 @@ class Loop(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             make_project(d)
             calls = []
-            asked = iter([""] * 7)                                         # train: 4 questions, settings Enter, "Start now?", "press Enter"
+            asked = iter([""] * 5 + ["y", ""])                             # train: 4 questions, settings Enter, "Start now?" (y), "press Enter"
             M.run_menu(d, stream=FakeTTY(), read=keys(M.number_key(0), "q"), ask=lambda q: next(asked), call=calls.append, width=100, color=False, interactive=True)
             self.assertEqual(len(calls), 1)
             self.assertEqual(calls[0][0], "train")
@@ -256,12 +257,13 @@ class LanguageData(unittest.TestCase):
     def test_taglish_needs_a_typed_yes(self):
         said = []
         self.assertFalse(M.confirm_corpus(["corpus", "--lang", "taglish", "--mode", "clean"], ask=lambda q: "y", say=said.append))
-        self.assertTrue(M.confirm_corpus(["corpus", "--lang", "taglish", "--mode", "clean"], ask=lambda q, it=iter(["yes", ""]): next(it), say=said.append))
+        self.assertTrue(M.confirm_corpus(["corpus", "--lang", "taglish", "--mode", "clean"], ask=lambda q, it=iter(["yes", "y"]): next(it), say=said.append))
         self.assertTrue(any("Private training only" in x for x in said))
 
     def test_no_taglish_just_asks_start(self):
         self.assertFalse(M.confirm_corpus(["corpus", "--lang", "ceb", "--mode", "clean"], ask=lambda q: "n", say=lambda *_: None))
-        self.assertTrue(M.confirm_corpus(["corpus", "--lang", "ceb", "--mode", "clean"], ask=lambda q: "", say=lambda *_: None))
+        self.assertFalse(M.confirm_corpus(["corpus", "--lang", "ceb", "--mode", "clean"], ask=lambda q: "", say=lambda *_: None))   # Enter = no
+        self.assertTrue(M.confirm_corpus(["corpus", "--lang", "ceb", "--mode", "clean"], ask=lambda q: "y", say=lambda *_: None))
 
     def test_download_refused_when_datasets_missing(self):
         said = []
@@ -277,7 +279,7 @@ class LanguageData(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             calls = []
             idx = M.number_key(M.ITEMS.index(self.item()))
-            answers = iter([idx, "ceb", "clean", "", "", "", "q"])      # pick, 3 questions, Start now?, press Enter, quit
+            answers = iter([idx, "ceb", "clean", "", "y", "", "q"])     # pick, 3 questions, Start now? (y), press Enter, quit
             M.run_menu(d, stream=io.StringIO(), ask=lambda q: next(answers), call=calls.append, interactive=False)
             self.assertEqual(calls, [["corpus", "--lang", "ceb", "--mode", "clean"]])
 
@@ -391,8 +393,9 @@ class Forms(unittest.TestCase):
     def test_confirm_strict_needs_a_deliberate_y(self):
         c = lambda strict: M.Confirm("t", ["line"], strict, False, FakeTTY(), False, 100)
         self.assertFalse(c(True).run(keys("enter", "n")))
-        self.assertTrue(c(True).run(keys("enter", "y")))
-        self.assertTrue(c(False).run(keys("enter")))
+        self.assertTrue(c(True).run(keys("y")))
+        self.assertFalse(c(False).run(keys("enter")))                    # Enter = no, for every confirmation
+        self.assertTrue(c(False).run(keys("y")))
         self.assertFalse(c(False).run(keys("esc")))
 
     def test_confirm_notice_returns_on_any_key(self):
@@ -415,7 +418,7 @@ class Forms(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             make_project(d)
             out = FakeTTY()
-            self.assertTrue(M.confirm_box(["train", "--run", os.path.join("work3", "run_pre")], M.scan(d), out, False, 100, keys("enter")))
+            self.assertTrue(M.confirm_box(["train", "--run", os.path.join("work3", "run_pre")], M.scan(d), out, False, 100, keys("y")))
             self.assertIn("CONTINUE", out.getvalue())
             out2 = FakeTTY()
             M.confirm_box(["train", "--run", "brand_new"], M.scan(d), out2, False, 100, keys("n"))
