@@ -65,26 +65,28 @@ class Screen(unittest.TestCase):
         for kw in ({"color": False}, {"color": True}, {"color": False, "unicode_ok": False}):
             m = M.Menu(FakeTTY(), width=80, **{k: v for k, v in kw.items()})
             lines = m.render(0, self.found())
-            self.assertEqual(len(lines), P.PANEL_H)
+            self.assertEqual(len(lines), M.MENU_H)
             self.assertEqual(len({P.vlen(x) for x in lines}), 1)
             self.assertLessEqual(P.vlen(lines[0]), 79)
             text = "\n".join(lines)
-            for want in ("Menu", "Details", "Project", "Train or resume a run", "s30m", "work3"):
+            for want in ("Menu", "Details", "Your project", "START HERE", "Teach your AI", "s30m", "work3", "Next suggestion"):
                 self.assertIn(want, text)
 
     def test_arrow_keys_wrap_and_enter_selects(self):
         m = M.Menu(FakeTTY(), color=False, width=100)
         f = self.found()
-        self.assertEqual(m.select(keys("down", "down", "enter"), f), 2)
+        D = M.DISPLAY                                                    # keys follow the order shown on screen
+        self.assertEqual(m.select(keys("down", "down", "enter"), f), D[2])
         self.assertEqual(m.select(keys("up", "enter"), f), M.QUIT)       # wraps to the last item
-        self.assertEqual(m.select(keys("3"), f), 2)                      # a number picks at once
+        self.assertEqual(m.select(keys("3"), f), D[2])                   # a number picks the item shown with that number
         self.assertEqual(m.select(keys("esc"), f), M.QUIT)
-        self.assertEqual(m.select(keys("j", "j", "k", "enter"), f), 1)
+        self.assertEqual(m.select(keys("j", "j", "k", "enter"), f), D[1])
+        self.assertEqual(m.select(keys("enter"), f), M.START)
 
     def test_screen_is_erased_between_key_presses(self):
         out = FakeTTY()
         M.Menu(out, color=False, width=100).select(keys("down", "enter"), self.found())
-        self.assertEqual(out.getvalue().count("\x1b[%dF\x1b[J" % P.PANEL_H), 1)      # the choice itself leaves the menu on screen
+        self.assertEqual(out.getvalue().count("\x1b[%dF\x1b[J" % M.MENU_H), 1)      # the choice itself leaves the menu on screen
 
 
 class Collect(unittest.TestCase):
@@ -199,7 +201,7 @@ class Confirm(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             make_project(d)
             calls, asked = [], iter(["", "", "", "", "", "n", ""])
-            M.run_menu(d, stream=FakeTTY(), read=keys("enter", "q"), ask=lambda q: next(asked), call=calls.append, width=100, color=False, interactive=True)
+            M.run_menu(d, stream=FakeTTY(), read=keys(M.number_key(0), "q"), ask=lambda q: next(asked), call=calls.append, width=100, color=False, interactive=True)
             self.assertEqual(calls, [])
 
 
@@ -209,7 +211,7 @@ class Loop(unittest.TestCase):
             make_project(d)
             calls = []
             asked = iter([""] * 7)                                         # train: 4 questions, settings Enter, "Start now?", "press Enter"
-            M.run_menu(d, stream=FakeTTY(), read=keys("enter", "q"), ask=lambda q: next(asked), call=calls.append, width=100, color=False, interactive=True)
+            M.run_menu(d, stream=FakeTTY(), read=keys(M.number_key(0), "q"), ask=lambda q: next(asked), call=calls.append, width=100, color=False, interactive=True)
             self.assertEqual(len(calls), 1)
             self.assertEqual(calls[0][0], "train")
 
@@ -218,12 +220,12 @@ class Loop(unittest.TestCase):
             raise RuntimeError("boom")
         with tempfile.TemporaryDirectory() as d:
             asked = iter([""])
-            self.assertEqual(M.run_menu(d, stream=FakeTTY(), read=keys(str(1 + [i["cmd"] for i in M.ITEMS].index("ui")), "q"), ask=lambda q: next(asked), call=bad, width=100, color=False, interactive=True), 0)
+            self.assertEqual(M.run_menu(d, stream=FakeTTY(), read=keys(M.number_key([i["cmd"] for i in M.ITEMS].index("ui")), "q"), ask=lambda q: next(asked), call=bad, width=100, color=False, interactive=True), 0)
 
     def test_numbered_fallback_when_not_interactive(self):
         with tempfile.TemporaryDirectory() as d:
             calls = []
-            answers = iter([str(1 + [i["cmd"] for i in M.ITEMS].index("check-gpu")), "", "q"])   # the GPU check (no questions), Enter, then quit
+            answers = iter([M.number_key([i["cmd"] for i in M.ITEMS].index("check-gpu")), "", "q"])   # the GPU check (no questions), Enter, then quit
             M.run_menu(d, stream=io.StringIO(), ask=lambda q: next(answers), call=calls.append, interactive=False)
             self.assertEqual(calls, [["check-gpu"]])
 
@@ -274,7 +276,7 @@ class LanguageData(unittest.TestCase):
     def test_menu_runs_it_through_the_loop(self):
         with tempfile.TemporaryDirectory() as d:
             calls = []
-            idx = str(M.ITEMS.index(self.item()) + 1)
+            idx = M.number_key(M.ITEMS.index(self.item()))
             answers = iter([idx, "ceb", "clean", "", "", "", "q"])      # pick, 3 questions, Start now?, press Enter, quit
             M.run_menu(d, stream=io.StringIO(), ask=lambda q: next(answers), call=calls.append, interactive=False)
             self.assertEqual(calls, [["corpus", "--lang", "ceb", "--mode", "clean"]])
@@ -422,7 +424,7 @@ class Forms(unittest.TestCase):
     def test_whole_menu_with_boxed_questions(self):
         with tempfile.TemporaryDirectory() as d:
             calls = []
-            idx = str(M.ITEMS.index(self.corpus()) + 1)
+            idx = M.number_key(M.ITEMS.index(self.corpus()))
             edit = keys("enter", "right", "enter", "enter", "enter", "y")           # languages ok, mode -> clean, mix no, Start, accept licence
             M.run_menu(d, stream=FakeTTY(), read=keys(idx, "q"), ask=lambda q: "", call=calls.append, width=100, color=False,
                        interactive=True, forms=True, read_edit=edit)
@@ -431,7 +433,7 @@ class Forms(unittest.TestCase):
     def test_whole_menu_backing_out_runs_nothing(self):
         with tempfile.TemporaryDirectory() as d:
             calls = []
-            idx = str(M.ITEMS.index(self.corpus()) + 1)
+            idx = M.number_key(M.ITEMS.index(self.corpus()))
             M.run_menu(d, stream=FakeTTY(), read=keys(idx, "q"), ask=lambda q: "", call=calls.append, width=100, color=False,
                        interactive=True, forms=True, read_edit=keys("esc"))
             self.assertEqual(calls, [])

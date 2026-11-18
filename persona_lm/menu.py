@@ -18,10 +18,10 @@ import subprocess
 import sys
 import textwrap
 
-from .pretty import MAX_W, MIN_WIDTH, PANEL_H, Skin, enable_vt, fit
+from .pretty import MAX_W, MIN_WIDTH, Skin, enable_vt, fit
 from .model import PRESETS
 from .train import DEFAULT_HP
-from .menu_text import ITEM_TEXT
+from .menu_text import DETAIL_FIELDS, GROUPS, ITEM_TEXT, NEXT, SCREEN, TECH_NAMES
 
 SKIP_DIRS = {".git", "__pycache__", "node_modules", "venv", ".venv", "site-packages", "private", "tests", "docs"}
 SIZES = sorted(PRESETS, key=lambda k: PRESETS[k]["d_model"])
@@ -429,6 +429,51 @@ def plain_text(item):
     return ITEM_TEXT[item["label"]]
 
 
+# What the main screen shows: the groups of menu_text.GROUPS, then Quit. ITEMS keeps its own order; the screen maps number keys through DISPLAY.
+_AT = {it["label"]: i for i, it in enumerate(ITEMS)}
+LAYOUT = [(head, [_AT[x] for x in labels]) for head, labels in GROUPS] + [(None, [QUIT])]
+DISPLAY = [i for _, idxs in LAYOUT for i in idxs]       # ITEMS indexes in the order shown
+START = DISPLAY[0]
+MENU_H, TOP_H = 27, 19                                    # lines of the whole main screen, and of its list/details row
+
+
+def number_key(i):
+    # the number shown next to ITEMS[i] on the screen (and typed in the numbered list)
+    return str(DISPLAY.index(i) + 1)
+
+
+def project_checks(found):
+    # (label, value, ok) lines about what exists, in words; only scan() results are used
+    S, runs = SCREEN, found["runs"]
+    if runs:
+        r = runs[0]
+        pct = "%d%% taught" % (100 * r["step"] // r["steps"]) if r["steps"] and r["step"] is not None else ""
+        info = ", ".join(x for x in (r["size"], pct) if x)
+        model = os.path.basename(os.path.normpath(r["path"])) + (" (%s)" % info if info else "") + ("  +%d more" % (len(runs) - 1) if len(runs) > 1 else "")
+    data = found["data"]
+    return [(S["model"], model if runs else S["model_none"], bool(runs)),
+            (S["data"], data[0] + ("  +%d more" % (len(data) - 1) if len(data) > 1 else "") if data else S["data_none"], bool(data)),
+            (S["torch"], S["torch_yes"] if found["torch"] else S["torch_no"], bool(found["torch"]))]
+
+
+def next_suggestion(found):
+    # ONE plain sentence about what to do next, from scan() only
+    t = lambda label: ITEM_TEXT[label]["title"]
+    v = dict(teach=t("Train or resume a run"), chat=t("Chat with a model"), finetune=t("Fine-tune a model (chat tuning)"),
+             download=t("Language data (download)"), prepare=t("Language data -> token files"))
+    runs = found["runs"]
+    if not runs:
+        return NEXT["data_only" if found["data"] else "empty"].format(**v)
+    r = runs[0]
+    v["name"] = os.path.basename(os.path.normpath(r["path"]))
+    if r["steps"] and r["step"] is not None and r["step"] < r["steps"]:
+        v["pct"] = 100 * r["step"] // r["steps"]
+        return NEXT["unfinished"].format(**v)
+    if _is_base_name(r["path"]):
+        return NEXT["base_only"].format(**v)
+    return NEXT["chat_ready" if "chat" in v["name"].lower() else "other"].format(**v)
+
+
 # ------------------------------------------------------------------ keys
 def _plain(ch):
     if ch in ("\r", "\n"):
@@ -486,66 +531,65 @@ class Menu(Skin):
 
     def render(self, sel, found):
         W = min(self.width - 1, MAX_W)
-        lw = W * 57 // 100
+        lw = max(34, W * 38 // 100)
         rw = W - lw - 1
-        li, ri = lw - 4, rw - 4
-        rows = []
-        for i, it in enumerate(ITEMS):
-            key = "q" if i == QUIT else str(i + 1)
-            if i == sel:
-                rows.append(self.c(fit("%s %s  %s" % (self.ptr, key, it["label"]), li), "30;46"))
-            else:
-                rows.append("  " + self.c(key, "90") + "  " + it["label"])
-        hint = "up/down move  Enter select  q quit" if not self.unicode else "↑↓ move   Enter select   q quit"
-        if len(rows) > PANEL_H - 2:                                  # more items than rows: the list scrolls with the selection
-            vis = PANEL_H - 3
-            start = min(max(sel - vis // 2, 0), len(rows) - vis)
-            big = rows[start:start + vis] + [self.c("%s  %d/%d" % (hint, sel + 1, len(rows)), "90")]
-        else:
-            big = rows + ([""] if len(rows) + 2 <= PANEL_H - 2 else []) + [self.c(hint, "90")]
+        li, ri, g = lw - 4, rw - 4, self.c
+        rows, sel_row = [], 0
+        for head, idxs in LAYOUT:
+            if head:
+                rows.append(g(head, "1"))
+            for i in idxs:
+                label, n = ITEMS[i]["label"], DISPLAY.index(i) + 1
+                key = "q" if i == QUIT else (str(n) if n <= 9 else " ")      # a single key press can only pick 1-9
+                title, tech = ITEM_TEXT[label]["title"], TECH_NAMES.get(label)
+                tail = " (%s)" % tech if tech and len(tech) + 3 <= li - 5 - len(title) else ""
+                if i == sel:
+                    sel_row = len(rows)
+                    rows.append(g(fit("%s %s  %s%s" % (self.ptr, key, title, tail), li), "30;46"))
+                else:
+                    rows.append("  " + g(key, "90") + "  " + title + g(tail, "90"))
+        inner = TOP_H - 2
+        start = min(max(sel_row - inner // 2, 0), len(rows) - inner) if len(rows) > inner else 0
+        big = rows[start:start + inner]
 
-        it = ITEMS[sel]
-        words = textwrap.wrap(it["desc"], ri)[:3]
-        cmd = "$ persona_lm %s" % it["cmd"] if it["cmd"] else ""
-        det = words + [""] * (3 - len(words)) + [self.c(cmd, "36")]
+        label = ITEMS[sel]["label"]
+        t, tech = ITEM_TEXT[label], TECH_NAMES.get(label)
+        det = [g(t["title"], "1") + (g("  (%s)" % tech, "90") if tech else "")]
+        for lab, key in DETAIL_FIELDS:
+            words = textwrap.wrap("%s %s" % (lab, t[key]), ri, subsequent_indent="  ")
+            det += [g(lab, "90") + words[0][len(lab):]] + words[1:]
 
-        runs, g = found["runs"], self.c
-        if runs:
-            r = runs[0]
-            extra = "  +%d" % (len(runs) - 1) if len(runs) > 1 else ""
-            prog = "  %d%%" % (100 * r["step"] // r["steps"]) if r["steps"] else ""
-            run_l = g("run     ", "90") + os.path.basename(r["path"].rstrip("\\/")) + g("  %s%s%s" % (r["size"], prog, extra), "90")
-        else:
-            run_l = g("run     ", "90") + g("none yet", "33")
-        data_l = g("data    ", "90") + (found["data"][0] + (g("  +%d" % (len(found["data"]) - 1), "90") if len(found["data"]) > 1 else "") if found["data"] else g("none yet", "33"))
-        tok_l = g("tokens  ", "90") + (found["toks"][0] if found["toks"] else g("none yet", "33"))
-        tor_l = g("torch   ", "90") + (g("installed", "32") if found["torch"] else g("not found (slow CPU mode)", "33"))
+        chk = [g(lab, "90") + " " + g(val, "32" if ok else "33") for lab, val, ok in project_checks(found)]
+        nxt = textwrap.wrap("%s %s" % (SCREEN["next"], next_suggestion(found)), W - 4, subsequent_indent="  ")
+        nxt[0] = g(SCREEN["next"], "1;36") + nxt[0][len(SCREEN["next"]):]
 
-        left = self.box("Menu", big, lw, PANEL_H)
-        right = self.box("Details", det, rw, 6) + self.box("Project", [run_l, data_l, tok_l, tor_l], rw, PANEL_H - 6)
-        return [a + " " + b for a, b in zip(left, right)]
+        left = self.box(SCREEN["menu_box"], big, lw, TOP_H)
+        right = self.box(SCREEN["details_box"], det, rw, TOP_H)
+        top = [a + " " + b for a, b in zip(left, right)]
+        return top + self.box(SCREEN["project_box"], chk + nxt, W, MENU_H - TOP_H - 1) + [g(fit(SCREEN["hint"], W), "90")]
 
-    def select(self, read, found, sel=0):
-        """Draws the menu and returns the chosen item's index (QUIT for q / Esc)."""
+    def select(self, read, found, sel=None):
+        """Draws the menu and returns the chosen item's index in ITEMS (QUIT for q / Esc). Keys move through the order on screen (DISPLAY)."""
+        pos = DISPLAY.index(START if sel is None else sel)
         self._write("\x1b[?25l")
         try:
             while True:
-                lines = self.render(sel, found)
+                lines = self.render(DISPLAY[pos], found)
                 self._write("\n".join(lines) + "\n")
                 self.n = len(lines)
                 k = read()
                 if k == "enter" or (k.isdigit() and 1 <= int(k) <= QUIT):
                     self.n = 0                                           # leave the menu on screen: the questions appear under it
-                    return sel if k == "enter" else int(k) - 1
+                    return DISPLAY[pos if k == "enter" else int(k) - 1]
                 self._erase()
                 if k in ("up", "k"):
-                    sel = (sel - 1) % len(ITEMS)
+                    pos = (pos - 1) % len(DISPLAY)
                 elif k in ("down", "j"):
-                    sel = (sel + 1) % len(ITEMS)
+                    pos = (pos + 1) % len(DISPLAY)
                 elif k == "home":
-                    sel = 0
+                    pos = 0
                 elif k == "end":
-                    sel = QUIT
+                    pos = len(DISPLAY) - 1
                 elif k in ("q", "esc"):
                     return QUIT
         finally:
@@ -1002,20 +1046,30 @@ def show_cmd(argv):
     return "python -m persona_lm " + (subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv))
 
 
-def _fallback(found, ask, say):
-    """A plain numbered list for consoles that cannot do the boxes."""
-    say("\nPersonaLM menu")
-    for i, it in enumerate(ITEMS):
-        say("  %s) %s" % ("q" if i == QUIT else i + 1, it["label"]))
+def _fallback(found, ask, say, width=None):
+    """A plain numbered list for consoles that cannot do the boxes. It says the same words as the boxed screen."""
+    w = min((width or shutil.get_terminal_size((80, 24)).columns) - 1, 79)
+    fill = lambda text, ind: textwrap.fill(text, w, subsequent_indent=ind)
+    say("\n" + SCREEN["fallback_title"])
+    for lab, val, _ok in project_checks(found):
+        say(fill("%s %s" % (lab, val), "    "))
+    say(fill("%s %s" % (SCREEN["next"], next_suggestion(found)), "    "))
+    for head, idxs in LAYOUT:
+        if head:
+            say("\n" + head)
+        for i in idxs:
+            label = ITEMS[i]["label"]
+            tech = TECH_NAMES.get(label)
+            say(fill("  %s) %s%s: %s" % ("q" if i == QUIT else DISPLAY.index(i) + 1, ITEM_TEXT[label]["title"], " (%s)" % tech if tech else "", ITEM_TEXT[label]["short"]), "      "))
     while True:
         try:
-            k = ask("Choose 1-%d or q: " % QUIT).strip().lower()
+            k = ask(SCREEN["fallback_prompt"]).strip().lower()
         except (EOFError, KeyboardInterrupt):
             return QUIT
         if k in ("q", ""):
             return QUIT
         if k.isdigit() and 1 <= int(k) <= QUIT:
-            return int(k) - 1
+            return DISPLAY[int(k) - 1]
 
 
 def run_menu(root=".", stream=None, read=read_key, ask=input, call=None, width=None, color=None, interactive=None, forms=None, read_edit=None):
@@ -1027,17 +1081,17 @@ def run_menu(root=".", stream=None, read=read_key, ask=input, call=None, width=N
     if interactive is None:
         isatty = getattr(out, "isatty", None)
         size = shutil.get_terminal_size((100, 24))
-        interactive = bool(isatty and isatty() and sys.stdin.isatty() and size.columns >= MIN_WIDTH and size.lines >= PANEL_H + 4
+        interactive = bool(isatty and isatty() and sys.stdin.isatty() and size.columns >= MIN_WIDTH and size.lines >= MENU_H + 2
                            and os.environ.get("TERM") != "dumb" and enable_vt())
     menu = Menu(out, color=(not os.environ.get("NO_COLOR")) if color is None else color, width=width)
     use_forms = bool(interactive and read is read_key and ask is input) if forms is None else bool(forms)
     read_edit = read_edit or read_edit_key
-    found, sel = scan(root), 0
+    found, sel = scan(root), START
     if interactive:
         menu.header()
     while True:
         try:
-            sel = menu.select(read, found, sel) if interactive else _fallback(found, ask, print)
+            sel = menu.select(read, found, sel) if interactive else _fallback(found, ask, print, width)
         except KeyboardInterrupt:
             sel = QUIT
         if sel == QUIT:

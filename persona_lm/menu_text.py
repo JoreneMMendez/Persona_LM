@@ -11,15 +11,17 @@ JARGON = ("checkpoint", "token", "tokenizer", "val loss", "overfit", "gpu", "cud
 ITEM_TEXT = {
     "Train or resume a run": dict(
         title="Teach your AI",
-        what="Your AI reads prepared text again and again and slowly gets better. You can also continue a stopped run.",
+        short="Your AI reads prepared text and improves.",
+        what="Your AI rereads prepared text and slowly gets better. You can also continue a stopped run.",
         when="Use this after you have prepared text files. Choose it again to continue a run that stopped.",
-        need="Prepared text files, and a name for the run folder. A graphics card makes it much faster.",
-        result="A run folder with your model file in it. The screen shows the folder name.",
-        time="From minutes to many hours. It depends on your computer and on how much text you have.",
+        need="Prepared text files and a run folder name. A graphics card is much faster.",
+        result="A run folder with your model file in it.",
+        time="Minutes to many hours. It depends on your computer and your text.",
         safe="Stopping with Ctrl+C is safe. Your chats and your other runs are not changed.",
     ),
     "Chat with a model": dict(
         title="Talk to your AI",
+        short="Chat with your AI in this window.",
         what="Type a message and your AI answers in this window. Nothing leaves your computer.",
         when="Use this after a run has finished teaching your AI to chat.",
         need="A model file that was taught to chat, and the tokenizer file that goes with it.",
@@ -29,6 +31,7 @@ ITEM_TEXT = {
     ),
     "Fine-tune a model (chat tuning)": dict(
         title="Teach your AI to chat",
+        short="Teach a base model to answer like a chat.",
         what="Start from a base model that only continues text. Gently teach it to answer like a chat.",
         when="Use this once you have a base model and prepared chat files.",
         need="A base model file, prepared chat files, and a NEW run folder name.",
@@ -37,7 +40,8 @@ ITEM_TEXT = {
         safe="Your base model and your chats are not changed. Stopping with Ctrl+C is safe.",
     ),
     "Generate text": dict(
-        title="Make your AI continue a sentence",
+        title="Finish a sentence",
+        short="Your AI continues a text, once.",
         what="You type the start of a text. Your AI writes how it might continue, once.",
         when="Use this to try a base model quickly. It does not hold a conversation.",
         need="A model file, its tokenizer file, and some words to start from.",
@@ -47,6 +51,7 @@ ITEM_TEXT = {
     ),
     "Project status": dict(
         title="See what you have",
+        short="Shows what exists and what to do next.",
         what="Shows which models and prepared text files exist in your project folder. It also suggests a next step.",
         when="Use this when you do not know what to do next.",
         need="Nothing.",
@@ -56,6 +61,7 @@ ITEM_TEXT = {
     ),
     "Open the Web UI": dict(
         title="Open the web page",
+        short="Click in your browser instead of typing.",
         what="Opens a page in your browser where you can click instead of typing. It runs only on your computer.",
         when="Use this if you prefer buttons, charts and forms to this menu.",
         need="A web browser. The internet is not needed.",
@@ -64,7 +70,8 @@ ITEM_TEXT = {
         safe="Only you can open the page. Your chats and models are not sent anywhere.",
     ),
     "Speed benchmark": dict(
-        title="Test how fast this computer is",
+        title="Test computer speed",
+        short="Shows how fast teaching will be.",
         what="Measures how fast your computer reads text. Then it estimates how long teaching your AI will take.",
         when="Use this before a long run, to plan your time.",
         need="Nothing. Pick the model size you plan to use.",
@@ -74,6 +81,7 @@ ITEM_TEXT = {
     ),
     "Check the GPU": dict(
         title="Check the graphics card",
+        short="Checks if the graphics card can help.",
         what="Checks whether your graphics card can be used to teach your AI faster. It prints a short report.",
         when="Use this once, or when teaching feels too slow.",
         need="PyTorch installed. Without a graphics card it still runs, but says so.",
@@ -82,16 +90,18 @@ ITEM_TEXT = {
         safe="This does not change your chats or your models.",
     ),
     "Dataset recipes (create / run)": dict(
-        title="Get a public dataset from the internet",
-        what="Reads a public dataset with a saved recipe, keeps what you want, and cleans it. Then it makes prepared text files.",
-        when="Use this when you want more public text than the basic language data gives you.",
-        need="An internet connection, and a recipe name. Choose 'new' to make a recipe by answering questions.",
-        result="Cleaned text and prepared text files in new folders. The screen shows their names.",
-        time="Minutes to hours. It depends on the dataset size and your internet.",
-        safe="Your chats and your models are not changed. Existing folders are not overwritten.",
+        title="Get a public dataset",
+        short="Use a saved recipe to get public text.",
+        what="Reads a public dataset with a saved recipe, keeps what you want, and cleans it.",
+        when="Use this for more public text than the basic language data gives.",
+        need="Internet, and a recipe name. Choose 'new' to make a recipe by answering questions.",
+        result="Cleaned text and prepared text files in new folders.",
+        time="Minutes to hours, depending on the dataset size and your internet.",
+        safe="Your chats and models are not changed. Old folders are not overwritten.",
     ),
     "Language data (download)": dict(
         title="Download public text",
+        short="Get English, Tagalog and Cebuano text.",
         what="Downloads public English, Tagalog, Cebuano and Taglish text. Then it cleans and checks it.",
         when="Use this first, to get text for your base model.",
         need="An internet connection and free disk space. Taglish needs your OK on the screen.",
@@ -101,15 +111,17 @@ ITEM_TEXT = {
     ),
     "Language data -> token files": dict(
         title="Make prepared text files",
-        what="Turns the cleaned language data into prepared text files that your AI can read. One click.",
+        short="Turn cleaned text into prepared text files.",
+        what="Turns the cleaned language data into prepared text files. One click.",
         when="Use this after downloading and cleaning the language data.",
-        need="Cleaned language data, and the tokenizer file work\\tok.json.",
-        result="A NEW folder, usually named data_pre_new. The screen shows its exact name.",
-        time="Minutes to an hour. It depends on how much text you have.",
+        need="Cleaned language data and the tokenizer file work\\tok.json.",
+        result="A NEW folder, usually named data_pre_new.",
+        time="Minutes to an hour, depending on how much text you have.",
         safe="The tokenizer file is only read. No internet is used. Old folders are not changed.",
     ),
     "Quit": dict(
         title="Quit",
+        short="Leave the menu.",
         what="Leaves the menu and goes back to the command window.",
         when="Use this when you are done.",
         need="Nothing.",
@@ -178,3 +190,45 @@ FRIENDLY_ERRORS = [
      "Ctrl+C asks the program to stop.",
      "This is safe. Choose the same item again to continue where it stopped."),
 ]
+
+# ---- T2: main menu screen -------------------------------------------------------------------
+# Headings of the main list, in display order. Items are named by their ITEMS `label`. Quit is always last.
+GROUPS = (
+    ("START HERE", ("Project status", "Open the Web UI")),
+    ("TALK TO YOUR AI", ("Chat with a model", "Generate text")),
+    ("TEACH YOUR AI", ("Train or resume a run", "Fine-tune a model (chat tuning)")),
+    ("PREPARE DATA", ("Language data (download)", "Language data -> token files", "Dataset recipes (create / run)")),
+    ("CHECKS AND TOOLS", ("Speed benchmark", "Check the GPU")),
+)
+
+# The technical name, shown in grey after the plain title.
+TECH_NAMES = {
+    "Train or resume a run": "train", "Chat with a model": "chat", "Fine-tune a model (chat tuning)": "fine-tune",
+    "Generate text": "generate", "Project status": "status", "Open the Web UI": "web UI", "Speed benchmark": "benchmark",
+    "Check the GPU": "check-gpu", "Dataset recipes (create / run)": "hfdata", "Language data (download)": "corpus",
+    "Language data -> token files": "build-tokens",
+}
+
+# Labels of the Details panel: (label, ITEM_TEXT key).
+DETAIL_FIELDS = (("What it does:", "what"), ("When to use:", "when"), ("You need:", "need"),
+                 ("You get:", "result"), ("Time:", "time"), ("Safe:", "safe"))
+
+SCREEN = dict(
+    menu_box="Menu", details_box="Details", project_box="Your project",
+    hint="Up/Down move   Enter choose   1-9 pick   q quit",
+    fallback_title="PersonaLM menu", fallback_prompt="Type a number, or q to quit: ",
+    model="Your AI model:", model_none="none yet. Teach one with the menu.",
+    data="Prepared text files:", data_none="none yet",
+    torch="Graphics card tools (PyTorch):", torch_yes="installed", torch_no="not found, so teaching will be slow",
+    next="Next suggestion:",
+)
+
+# Next suggestion, made from scan(). {teach} {chat} {finetune} {download} {prepare} are the plain titles of the items.
+NEXT = dict(
+    empty="You have no prepared text yet. Pick '{download}', then '{prepare}'.",
+    data_only="Your text is ready. Pick '{teach}' to start your first run.",
+    unfinished="Your newest run, {name}, is {pct}% taught. Pick '{teach}' to continue it.",
+    other="Your newest model is {name}. Pick '{chat}' to try it, or '{teach}' to teach it more.",
+    base_only="Your newest model, {name}, is a base model and cannot chat yet. Pick '{finetune}'.",
+    chat_ready="Your AI {name} can chat. Pick '{chat}' to talk to it.",
+)

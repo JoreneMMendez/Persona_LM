@@ -142,15 +142,14 @@ class MenuScrolls(unittest.TestCase):
             def isatty(self):
                 return True
         lines = M.Menu(T(), color=False, width=100).render(sel, self.FOUND)
-        self.assertEqual(len(lines), P.PANEL_H)
+        self.assertEqual(len(lines), M.MENU_H)
         self.assertEqual(len({P.vlen(x) for x in lines}), 1)
         return "\n".join(lines)
 
     def test_every_item_can_be_reached_and_seen_when_selected(self):
         for i, it in enumerate(M.ITEMS):
             text = self.render(i)
-            self.assertIn(it["label"], text, it["label"])
-            self.assertIn("%d/%d" % (i + 1, len(M.ITEMS)), text)
+            self.assertIn(M.plain_text(it)["title"], text, it["label"])       # the plain title (T2 renamed the rows)
 
     def test_quit_is_visible_on_the_last_item(self):
         self.assertIn("Quit", self.render(M.QUIT))
